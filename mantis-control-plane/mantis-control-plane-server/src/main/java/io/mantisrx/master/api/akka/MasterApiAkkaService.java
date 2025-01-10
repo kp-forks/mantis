@@ -19,17 +19,20 @@ package io.mantisrx.master.api.akka;
 import akka.NotUsed;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
-import akka.http.javadsl.ConnectHttp;
 import akka.http.javadsl.Http;
+import akka.http.javadsl.HttpsConnectionContext;
 import akka.http.javadsl.ServerBinding;
+import akka.http.javadsl.ServerBuilder;
 import akka.http.javadsl.model.HttpRequest;
 import akka.http.javadsl.model.HttpResponse;
 import akka.http.javadsl.settings.ServerSettings;
 import akka.http.javadsl.settings.WebSocketSettings;
 import akka.stream.Materializer;
 import akka.stream.javadsl.Flow;
+import akka.stream.javadsl.Sink;
 import com.netflix.spectator.impl.Preconditions;
 import io.mantisrx.master.api.akka.route.MantisMasterRoute;
+import io.mantisrx.master.api.akka.route.MasterApiMetrics;
 import io.mantisrx.master.api.akka.route.handlers.JobArtifactRouteHandler;
 import io.mantisrx.master.api.akka.route.handlers.JobArtifactRouteHandlerImpl;
 import io.mantisrx.master.api.akka.route.handlers.JobClusterRouteHandler;
@@ -42,14 +45,12 @@ import io.mantisrx.master.api.akka.route.handlers.JobStatusRouteHandler;
 import io.mantisrx.master.api.akka.route.handlers.JobStatusRouteHandlerAkkaImpl;
 import io.mantisrx.master.api.akka.route.handlers.ResourceClusterRouteHandler;
 import io.mantisrx.master.api.akka.route.handlers.ResourceClusterRouteHandlerAkkaImpl;
-import io.mantisrx.master.api.akka.route.v0.AgentClusterRoute;
 import io.mantisrx.master.api.akka.route.v0.JobClusterRoute;
 import io.mantisrx.master.api.akka.route.v0.JobDiscoveryRoute;
 import io.mantisrx.master.api.akka.route.v0.JobRoute;
 import io.mantisrx.master.api.akka.route.v0.JobStatusRoute;
 import io.mantisrx.master.api.akka.route.v0.MasterDescriptionRoute;
 import io.mantisrx.master.api.akka.route.v1.AdminMasterRoute;
-import io.mantisrx.master.api.akka.route.v1.AgentClustersRoute;
 import io.mantisrx.master.api.akka.route.v1.JobArtifactsRoute;
 import io.mantisrx.master.api.akka.route.v1.JobClustersRoute;
 import io.mantisrx.master.api.akka.route.v1.JobDiscoveryStreamRoute;
@@ -57,15 +58,13 @@ import io.mantisrx.master.api.akka.route.v1.JobStatusStreamRoute;
 import io.mantisrx.master.api.akka.route.v1.JobsRoute;
 import io.mantisrx.master.api.akka.route.v1.LastSubmittedJobIdStreamRoute;
 import io.mantisrx.master.events.LifecycleEventPublisher;
-import io.mantisrx.master.vm.AgentClusterOperations;
 import io.mantisrx.server.core.BaseService;
+import io.mantisrx.server.core.ILeadershipManager;
 import io.mantisrx.server.core.master.MasterDescription;
 import io.mantisrx.server.core.master.MasterMonitor;
-import io.mantisrx.server.master.ILeadershipManager;
 import io.mantisrx.server.master.LeaderRedirectionFilter;
 import io.mantisrx.server.master.persistence.IMantisPersistenceProvider;
 import io.mantisrx.server.master.resourcecluster.ResourceClusters;
-import io.mantisrx.server.master.scheduler.MantisScheduler;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -87,7 +86,6 @@ public class MasterApiAkkaService extends BaseService {
     private final ActorRef statusEventBrokerActor;
     private final int port;
     private final IMantisPersistenceProvider storageProvider;
-    private final MantisScheduler scheduler;
     private final LifecycleEventPublisher lifecycleEventPublisher;
     private final MantisMasterRoute mantisMasterRoute;
     private final ILeadershipManager leadershipManager;
@@ -95,6 +93,7 @@ public class MasterApiAkkaService extends BaseService {
     private final Materializer materializer;
     private final ExecutorService executorService;
     private final CountDownLatch serviceLatch = new CountDownLatch(1);
+    private final HttpsConnectionContext httpsConnectionContext;
 
     public MasterApiAkkaService(final MasterMonitor masterMonitor,
                                 final MasterDescription masterDescription,
@@ -104,20 +103,42 @@ public class MasterApiAkkaService extends BaseService {
                                 final ActorRef resourceClustersHostManagerActor,
                                 final int serverPort,
                                 final IMantisPersistenceProvider mantisStorageProvider,
-                                final MantisScheduler scheduler,
+                                final LifecycleEventPublisher lifecycleEventPublisher,
+                                final ILeadershipManager leadershipManager
+                                ) {
+        this(
+            masterMonitor,
+            masterDescription,
+            jobClustersManagerActor,
+            statusEventBrokerActor,
+            resourceClusters,
+            resourceClustersHostManagerActor,
+            serverPort,
+            mantisStorageProvider,
+            lifecycleEventPublisher,
+            leadershipManager,
+            null
+        );
+    }
+    public MasterApiAkkaService(final MasterMonitor masterMonitor,
+                                final MasterDescription masterDescription,
+                                final ActorRef jobClustersManagerActor,
+                                final ActorRef statusEventBrokerActor,
+                                final ResourceClusters resourceClusters,
+                                final ActorRef resourceClustersHostManagerActor,
+                                final int serverPort,
+                                final IMantisPersistenceProvider mantisStorageProvider,
                                 final LifecycleEventPublisher lifecycleEventPublisher,
                                 final ILeadershipManager leadershipManager,
-                                final AgentClusterOperations agentClusterOperations) {
+                                final HttpsConnectionContext httpsConnectionContext) {
         super(true);
         Preconditions.checkNotNull(masterMonitor, "MasterMonitor");
         Preconditions.checkNotNull(masterDescription, "masterDescription");
         Preconditions.checkNotNull(jobClustersManagerActor, "jobClustersManagerActor");
         Preconditions.checkNotNull(statusEventBrokerActor, "statusEventBrokerActor");
         Preconditions.checkNotNull(mantisStorageProvider, "mantisStorageProvider");
-        Preconditions.checkNotNull(scheduler, "scheduler");
         Preconditions.checkNotNull(lifecycleEventPublisher, "lifecycleEventPublisher");
         Preconditions.checkNotNull(leadershipManager, "leadershipManager");
-        Preconditions.checkNotNull(agentClusterOperations, "agentClusterOperations");
         this.masterMonitor = masterMonitor;
         this.masterDescription = masterDescription;
         this.jobClustersManagerActor = jobClustersManagerActor;
@@ -126,12 +147,12 @@ public class MasterApiAkkaService extends BaseService {
         this.resourceClusters = resourceClusters;
         this.port = serverPort;
         this.storageProvider = mantisStorageProvider;
-        this.scheduler = scheduler;
         this.lifecycleEventPublisher = lifecycleEventPublisher;
         this.leadershipManager = leadershipManager;
         this.system = ActorSystem.create("MasterApiActorSystem");
         this.materializer = Materializer.createMaterializer(system);
-        this.mantisMasterRoute = configureApiRoutes(this.system, agentClusterOperations);
+        this.mantisMasterRoute = configureApiRoutes(this.system);
+        this.httpsConnectionContext = httpsConnectionContext;
         this.executorService = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "MasterApiAkkaServiceThread");
             t.setDaemon(true);
@@ -147,7 +168,7 @@ public class MasterApiAkkaService extends BaseService {
     }
 
 
-    private MantisMasterRoute configureApiRoutes(final ActorSystem actorSystem, final AgentClusterOperations agentClusterOperations) {
+    private MantisMasterRoute configureApiRoutes(final ActorSystem actorSystem) {
         // Setup API routes
         final JobClusterRouteHandler jobClusterRouteHandler = new JobClusterRouteHandlerAkkaImpl(jobClustersManagerActor);
         final JobRouteHandler jobRouteHandler = new JobRouteHandlerAkkaImpl(jobClustersManagerActor);
@@ -162,13 +183,11 @@ public class MasterApiAkkaService extends BaseService {
 
         final JobDiscoveryRoute v0JobDiscoveryRoute = new JobDiscoveryRoute(jobDiscoveryRouteHandler);
         final JobClusterRoute v0JobClusterRoute = new JobClusterRoute(jobClusterRouteHandler, jobRouteHandler, actorSystem);
-        final AgentClusterRoute v0AgentClusterRoute = new AgentClusterRoute(agentClusterOperations, actorSystem);
         final JobStatusRoute v0JobStatusRoute = new JobStatusRoute(jobStatusRouteHandler);
 
         final JobClustersRoute v1JobClusterRoute = new JobClustersRoute(jobClusterRouteHandler, actorSystem);
         final JobsRoute v1JobsRoute = new JobsRoute(jobClusterRouteHandler, jobRouteHandler, actorSystem);
         final AdminMasterRoute v1AdminMasterRoute = new AdminMasterRoute(masterDescription);
-        final AgentClustersRoute v1AgentClustersRoute = new AgentClustersRoute(agentClusterOperations);
         final JobDiscoveryStreamRoute v1JobDiscoveryStreamRoute = new JobDiscoveryStreamRoute(jobDiscoveryRouteHandler);
         final LastSubmittedJobIdStreamRoute v1LastSubmittedJobIdStreamRoute = new LastSubmittedJobIdStreamRoute(jobDiscoveryRouteHandler);
         final JobStatusStreamRoute v1JobStatusStreamRoute = new JobStatusStreamRoute(jobStatusRouteHandler);
@@ -187,12 +206,10 @@ public class MasterApiAkkaService extends BaseService {
             v0JobRoute,
             v0JobDiscoveryRoute,
             v0JobStatusRoute,
-            v0AgentClusterRoute,
             v1JobClusterRoute,
             v1JobsRoute,
             v1JobArtifactsRoute,
             v1AdminMasterRoute,
-            v1AgentClustersRoute,
             v1JobDiscoveryStreamRoute,
             v1LastSubmittedJobIdStreamRoute,
             v1JobStatusStreamRoute,
@@ -204,8 +221,6 @@ public class MasterApiAkkaService extends BaseService {
         final Flow<HttpRequest, HttpResponse, NotUsed> routeFlow =
             this.mantisMasterRoute.createRoute().flow(system, materializer);
 
-        final Http http = Http.get(system);
-
         ServerSettings defaultSettings = ServerSettings.create(system);
         java.time.Duration idleTimeout = system.settings().config().getDuration("akka.http.server.idle-timeout");
         logger.info("idle timeout {} sec ", idleTimeout.getSeconds());
@@ -215,18 +230,28 @@ public class MasterApiAkkaService extends BaseService {
 
         ServerSettings customServerSettings = defaultSettings.withWebsocketSettings(customWebsocketSettings);
 
-        final CompletionStage<ServerBinding> binding = http.bindAndHandle(routeFlow,
-            ConnectHttp.toHost("0.0.0.0", port),
-            customServerSettings,
-            system.log(),
-            materializer);
-        binding.exceptionally(failure -> {
-            System.err.println("API service exited, committing suicide !" + failure.getMessage());
-            logger.info("Master API service exited in error, committing suicide !");
-            system.terminate();
-            System.exit(2);
-            return null;
-        });
+        ServerBuilder httpServerBuilder = Http.get(system)
+            .newServerAt("0.0.0.0", port);
+
+        if(this.httpsConnectionContext != null) {
+            httpServerBuilder = httpServerBuilder.enableHttps(this.httpsConnectionContext);
+        }
+
+        final CompletionStage<ServerBinding> binding = httpServerBuilder
+                .withSettings(customServerSettings)
+                .connectionSource()
+                .to(Sink.foreach(connection -> {
+                    MasterApiMetrics.getInstance().incrementIncomingRequestCount();
+                    connection.handleWith(routeFlow, materializer);
+                }))
+                .run(materializer)
+                .exceptionally(failure -> {
+                    System.err.println("API service exited, committing suicide !" + failure.getMessage());
+                    logger.info("Master API service exited in error, committing suicide !");
+                    system.terminate();
+                    System.exit(2);
+                    return null;
+                });
         logger.info("Starting Mantis Master API on port {}", port);
         try {
             serviceLatch.await();

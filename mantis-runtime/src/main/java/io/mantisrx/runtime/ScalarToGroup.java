@@ -36,14 +36,14 @@ import java.util.List;
 
 public class ScalarToGroup<T, K, R> extends KeyValueStageConfig<T, K, R> {
 
-    private ToGroupComputation<T, K, R> computation;
-    private long keyExpireTimeSeconds;
+    private final ToGroupComputation<T, K, R> computation;
+    private final long keyExpireTimeSeconds;
 
 
     /**
-     * @param computation
-     * @param config
-     * @param inputCodec
+     * @param computation is a ToGroupComputation
+     * @param config is a ScalartoGroup config
+     * @param inputCodec is codec of mantisx runtime codec
      *
      * @deprecated As of release 0.603, use {@link #ScalarToGroup(ToGroupComputation, Config, Codec)} instead
      */
@@ -52,9 +52,9 @@ public class ScalarToGroup<T, K, R> extends KeyValueStageConfig<T, K, R> {
         this(computation, config, NettyCodec.fromNetty(inputCodec));
     }
 
-    ScalarToGroup(ToGroupComputation<T, K, R> computation,
+    public ScalarToGroup(ToGroupComputation<T, K, R> computation,
                   Config<T, K, R> config, Codec<T> inputCodec) {
-        super(config.description, null, inputCodec, config.keyCodec, config.codec, config.inputStrategy, config.parameters);
+        super(config.description, null, inputCodec, config.keyCodec, config.codec, config.inputStrategy, config.parameters, config.concurrency);
         this.computation = computation;
         this.keyExpireTimeSeconds = config.keyExpireTimeSeconds;
 
@@ -76,13 +76,14 @@ public class ScalarToGroup<T, K, R> extends KeyValueStageConfig<T, K, R> {
         private String description;
         // default input type is concurrent for 'grouping' use case
         private INPUT_STRATEGY inputStrategy = INPUT_STRATEGY.CONCURRENT;
+        private int concurrency = DEFAULT_STAGE_CONCURRENCY;
         private long keyExpireTimeSeconds = Long.MAX_VALUE; // never expire by default
         private List<ParameterDefinition<?>> parameters = Collections.emptyList();
 
         /**
-         * @param codec
+         * @param codec is Codec of netty reactivex
          *
-         * @return
+         * @return Config
          *
          * @deprecated As of release 0.603, use {@link #codec(Codec)} instead
          */
@@ -108,11 +109,18 @@ public class ScalarToGroup<T, K, R> extends KeyValueStageConfig<T, K, R> {
 
         public Config<T, K, R> serialInput() {
             this.inputStrategy = INPUT_STRATEGY.SERIAL;
+            this.concurrency = 1;
             return this;
         }
 
         public Config<T, K, R> concurrentInput() {
             this.inputStrategy = INPUT_STRATEGY.CONCURRENT;
+            return this;
+        }
+
+        public Config<T, K, R> concurrentInput(final int concurrency) {
+            this.inputStrategy = INPUT_STRATEGY.CONCURRENT;
+			this.concurrency = concurrency;
             return this;
         }
 
@@ -136,6 +144,8 @@ public class ScalarToGroup<T, K, R> extends KeyValueStageConfig<T, K, R> {
         public INPUT_STRATEGY getInputStrategy() {
             return inputStrategy;
         }
+
+        public int getConcurrency() { return concurrency; }
 
         public long getKeyExpireTimeSeconds() {
             return keyExpireTimeSeconds;

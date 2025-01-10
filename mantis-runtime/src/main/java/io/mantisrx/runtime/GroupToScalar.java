@@ -38,8 +38,8 @@ import java.util.concurrent.TimeUnit;
  */
 public class GroupToScalar<K, T, R> extends StageConfig<T, R> {
 
-    private GroupToScalarComputation<K, T, R> computation;
-    private long keyExpireTimeSeconds;
+    private final GroupToScalarComputation<K, T, R> computation;
+    private final long keyExpireTimeSeconds;
 
     /**
      * @deprecated As of release 0.603, use {@link #GroupToScalar(GroupToScalarComputation, Config, Codec)} instead
@@ -56,7 +56,7 @@ public class GroupToScalar<K, T, R> extends StageConfig<T, R> {
 
     GroupToScalar(GroupToScalarComputation<K, T, R> computation,
                   Config<K, T, R> config, Codec<K> inputKeyCodec, Codec<T> inputCodec) {
-        super(config.description, inputKeyCodec, inputCodec, config.codec, config.inputStrategy, config.parameters);
+        super(config.description, inputKeyCodec, inputCodec, config.codec, config.inputStrategy, config.parameters, config.concurrency);
         this.computation = computation;
         this.keyExpireTimeSeconds = config.keyExpireTimeSeconds;
     }
@@ -78,12 +78,13 @@ public class GroupToScalar<K, T, R> extends StageConfig<T, R> {
         // 'stateful group calculation' use case
         // do not allow config override
         private INPUT_STRATEGY inputStrategy = INPUT_STRATEGY.SERIAL;
+        private int concurrency = DEFAULT_STAGE_CONCURRENCY;
         private List<ParameterDefinition<?>> parameters = Collections.emptyList();
 
         /**
-         * @param codec
+         * @param codec is netty reactivex Codec
          *
-         * @return
+         * @return Config
          *
          * @deprecated As of release 0.603, use {@link #codec(io.mantisrx.common.codec.Codec)} instead
          */
@@ -100,9 +101,9 @@ public class GroupToScalar<K, T, R> extends StageConfig<T, R> {
         /**
          * Not used. As we are not generating GroupedObservables
          *
-         * @param seconds
+         * @param seconds is a long
          *
-         * @return
+         * @return Config
          */
         public Config<K, T, R> keyExpireTimeSeconds(long seconds) {
             this.keyExpireTimeSeconds = seconds;
@@ -116,6 +117,12 @@ public class GroupToScalar<K, T, R> extends StageConfig<T, R> {
 
         public Config<K, T, R> concurrentInput() {
             this.inputStrategy = INPUT_STRATEGY.CONCURRENT;
+            return this;
+        }
+
+        public Config<K, T, R> concurrentInput(final int concurrency) {
+            this.inputStrategy = INPUT_STRATEGY.CONCURRENT;
+			this.concurrency = concurrency;
             return this;
         }
 
@@ -134,6 +141,8 @@ public class GroupToScalar<K, T, R> extends StageConfig<T, R> {
         public INPUT_STRATEGY getInputStrategy() {
             return inputStrategy;
         }
+
+        public int getConcurrency() { return concurrency; }
 
         public Config<K, T, R> withParameters(List<ParameterDefinition<?>> params) {
             this.parameters = params;

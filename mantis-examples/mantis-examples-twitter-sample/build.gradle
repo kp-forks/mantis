@@ -1,21 +1,21 @@
 apply plugin: 'java-library'
+apply plugin: 'mantis'
 
 configurations.all {
     resolutionStrategy {
-        force "com.google.guava:guava:18.0"
-        force "org.apache.httpcomponents:httpclient:4.5.9"
+        force "com.google.guava:guava:31.1-jre"
     }
 }
 
 
 task execute(type: JavaExec) {
-    main = "com.netflix.mantis.examples.wordcount.TwitterJob"
+    main = "com.netflix.mantis.examples.wordcount.TwitterDslJob"
     classpath = sourceSets.main.runtimeClasspath
 }
 
 dependencies {
     implementation project(':mantis-runtime')
-
+    implementation libraries.spectatorApi
     implementation 'com.twitter:hbc-core:2.2.0'
 
     implementation libraries.slf4jApi

@@ -16,7 +16,6 @@
 
 package io.mantisrx.master.resourcecluster;
 
-import static io.mantisrx.master.resourcecluster.ResourceClusterActorTest.actorSystem;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -40,13 +39,15 @@ import io.mantisrx.master.resourcecluster.proto.GetClusterUsageResponse;
 import io.mantisrx.master.resourcecluster.proto.GetClusterUsageResponse.UsageByGroupKey;
 import io.mantisrx.master.resourcecluster.proto.ResourceClusterScaleSpec;
 import io.mantisrx.master.resourcecluster.proto.ScaleResourceRequest;
-import io.mantisrx.master.resourcecluster.resourceprovider.ResourceClusterStorageProvider;
 import io.mantisrx.master.resourcecluster.writable.ResourceClusterScaleRulesWritable;
 import io.mantisrx.runtime.MachineDefinition;
+import io.mantisrx.server.master.persistence.IMantisPersistenceProvider;
 import io.mantisrx.server.master.resourcecluster.ClusterID;
 import io.mantisrx.server.master.resourcecluster.ContainerSkuID;
 import io.mantisrx.server.master.resourcecluster.TaskExecutorID;
 import io.mantisrx.shaded.com.google.common.collect.ImmutableList;
+import io.mantisrx.shaded.com.google.common.collect.ImmutableSet;
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -54,7 +55,6 @@ import java.time.ZoneId;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -66,7 +66,7 @@ public class ResourceClusterScalerActorTests {
     private static final ContainerSkuID skuMedium = ContainerSkuID.of("medium");
     private static final ContainerSkuID skuLarge = ContainerSkuID.of("large");
     private ActorRef scalerActor;
-    private ResourceClusterStorageProvider storageProvider;
+    private IMantisPersistenceProvider storageProvider;
     private TestKit clusterActorProbe;
     private TestKit hostActorProbe;
 
@@ -77,6 +77,8 @@ public class ResourceClusterScalerActorTests {
 
     private static final MachineDefinition MACHINE_DEFINITION_M =
         new MachineDefinition(3, 4096, 700, 10240, 5);
+
+    private static ActorSystem actorSystem;
 
     @BeforeClass
     public static void setup() {
@@ -90,13 +92,13 @@ public class ResourceClusterScalerActorTests {
     }
 
     @Before
-    public void setupMocks() {
+    public void setupMocks() throws IOException {
         clusterActorProbe = new TestKit(actorSystem);
         hostActorProbe = new TestKit(actorSystem);
-        this.storageProvider = mock(ResourceClusterStorageProvider.class);
+        this.storageProvider = mock(IMantisPersistenceProvider.class);
 
         when(this.storageProvider.getResourceClusterScaleRules(CLUSTER_ID))
-            .thenReturn(CompletableFuture.completedFuture(
+            .thenReturn(
                 ResourceClusterScaleRulesWritable.builder()
                     .scaleRule(skuSmall.getResourceID(), ResourceClusterScaleSpec.builder()
                         .clusterId(CLUSTER_ID)
@@ -116,8 +118,7 @@ public class ResourceClusterScalerActorTests {
                         .minSize(11)
                         .maxSize(15)
                         .build())
-                    .build()
-            ));
+                    .build());
     }
 
     @Test
@@ -173,7 +174,9 @@ public class ResourceClusterScalerActorTests {
                 .build()));
 
         // Test callback from fetch idle list.
-        ImmutableList<TaskExecutorID> idleInstances = ImmutableList.of(TaskExecutorID.of("agent1"));
+        ImmutableList<TaskExecutorID> idleInstances = ImmutableList.of(
+            TaskExecutorID.of("agent1"),
+            TaskExecutorID.of("agent2"));
         scalerActor.tell(
             GetClusterIdleInstancesResponse.builder()
                 .clusterId(CLUSTER_ID)
@@ -193,13 +196,24 @@ public class ResourceClusterScalerActorTests {
                 .build(),
             hostActorProbe.expectMsgClass(ScaleResourceRequest.class));
 
+        // validate the idle intances are disabled
+        io.mantisrx.master.resourcecluster.DisableTaskExecutorsRequest disableTEReq =
+            clusterActorProbe.expectMsgClass(io.mantisrx.master.resourcecluster.DisableTaskExecutorsRequest.class);
+        io.mantisrx.master.resourcecluster.DisableTaskExecutorsRequest disableTEReq2 =
+            clusterActorProbe.expectMsgClass(io.mantisrx.master.resourcecluster.DisableTaskExecutorsRequest.class);
+        assertTrue(disableTEReq.getTaskExecutorID().isPresent());
+        assertTrue(disableTEReq2.getTaskExecutorID().isPresent());
+        assertEquals(
+            ImmutableSet.of(disableTEReq2.getTaskExecutorID().get(), disableTEReq.getTaskExecutorID().get()),
+            ImmutableSet.copyOf(idleInstances));
+
         // Test trigger again
         GetClusterUsageRequest req2 = clusterActorProbe.expectMsgClass(GetClusterUsageRequest.class);
         assertEquals(CLUSTER_ID, req2.getClusterID());
     }
 
     @Test
-    public void testScalerRuleSetRefresh() throws InterruptedException {
+    public void testScalerRuleSetRefresh() throws InterruptedException, IOException {
         final Props props =
             ResourceClusterScalerActor.props(
                 CLUSTER_ID,
@@ -216,7 +230,7 @@ public class ResourceClusterScalerActorTests {
         assertEquals(2, rules.getRules().size());
 
         when(this.storageProvider.getResourceClusterScaleRules(CLUSTER_ID))
-            .thenReturn(CompletableFuture.completedFuture(
+            .thenReturn(
                 ResourceClusterScaleRulesWritable.builder()
                     .scaleRule(skuMedium.getResourceID(), ResourceClusterScaleSpec.builder()
                         .clusterId(CLUSTER_ID)
@@ -227,8 +241,7 @@ public class ResourceClusterScalerActorTests {
                         .minSize(11)
                         .maxSize(15)
                         .build())
-                    .build()
-            ));
+                    .build());
 
         Thread.sleep(1500);
 
@@ -252,7 +265,9 @@ public class ResourceClusterScalerActorTests {
                 .minSize(11)
                 .maxSize(15)
                 .build(),
-            Clock.fixed(Clock.systemUTC().instant(), ZoneId.systemDefault()));
+            Clock.fixed(Clock.systemUTC().instant(), ZoneId.systemDefault()),
+            Instant.MIN,
+            true);
 
         // Test scale up
         UsageByGroupKey usage = UsageByGroupKey.builder()
@@ -302,7 +317,9 @@ public class ResourceClusterScalerActorTests {
                 .minSize(11)
                 .maxSize(15)
                 .build(),
-            Clock.systemUTC());
+            Clock.systemUTC(),
+            Instant.MIN,
+            true);
 
         // Test scale up
         UsageByGroupKey usage =
@@ -353,7 +370,9 @@ public class ResourceClusterScalerActorTests {
                 .minSize(11)
                 .maxSize(15)
                 .build(),
-            Clock.fixed(Instant.MIN, ZoneId.systemDefault()));
+            Clock.fixed(Instant.MIN, ZoneId.systemDefault()),
+            Instant.MIN,
+            true);
 
         // Test scale up
         UsageByGroupKey usage = UsageByGroupKey.builder()

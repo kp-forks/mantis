@@ -29,6 +29,7 @@ import io.mantisrx.master.jobcluster.job.worker.IMantisWorkerMetadata;
 import io.mantisrx.master.jobcluster.job.worker.WorkerState;
 import io.mantisrx.server.core.domain.WorkerId;
 import io.mantisrx.server.master.domain.JobId;
+import io.mantisrx.server.master.resourcecluster.ClusterID;
 import io.mantisrx.shaded.com.google.common.util.concurrent.AbstractScheduledService;
 import io.mantisrx.shaded.org.apache.curator.shaded.com.google.common.base.Preconditions;
 import io.netty.util.internal.ConcurrentSet;
@@ -126,13 +127,15 @@ public class WorkerMetricsCollector extends AbstractScheduledService implements
             }
 
             final WorkerMetrics workerMetrics = getWorkerMetrics(
-                metadata.getCluster().orElse("unknown"));
+                metadata.getResourceCluster().map(ClusterID::getResourceID).orElse("mesos"));
 
             switch (workerState) {
                 case Accepted:
                     // do nothing; This is the initial state
                     break;
                 case Launched:
+                    log.debug("Worker {} launched with scheduling time: {}",
+                        workerId, Math.max(0L, workerStatusEvent.getTimestamp() - metadata.getAcceptedAt()));
                     // this represents the scheduling time
                     workerMetrics.reportSchedulingDuration(
                         Math.max(0L, workerStatusEvent.getTimestamp() - metadata.getAcceptedAt()));
@@ -176,7 +179,10 @@ public class WorkerMetricsCollector extends AbstractScheduledService implements
 
         public WorkerMetrics(final String clusterName) {
             MetricGroupId metricGroupId =
-                new MetricGroupId("WorkerMetricsCollector", Tag.of("cluster", clusterName));
+                new MetricGroupId(
+                    "WorkerMetricsCollector",
+                    Tag.of("cluster", clusterName),
+                    Tag.of("resourceCluster", clusterName));
             Metrics m = new Metrics.Builder()
                 .id(metricGroupId)
                 .addTimer(SCHEDULING_DURATION)

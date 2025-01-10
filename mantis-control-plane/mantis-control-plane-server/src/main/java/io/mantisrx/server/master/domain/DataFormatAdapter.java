@@ -115,6 +115,7 @@ public class DataFormatAdapter {
                         .withLabels(nJob.getLabels())
                         .withParameters(nJob.getParameters())
                         .withJobClusterConfigs(DataFormatAdapter.convertJarsToJobClusterConfigs(nJob.getJars()))
+                        .withIsDisabled(nJob.getDisabled())
                         .build())
                 .build();
 
@@ -150,11 +151,10 @@ public class DataFormatAdapter {
 
     public static NamedJob.Jar convertJobClusterConfigToJar(JobClusterConfig jConfig) throws MalformedURLException {
         SchedulingInfo sInfo = jConfig.getSchedulingInfo();
-        String name = jConfig.getArtifactName();
         long uploadedAt = jConfig.getUploadedAt();
         String version = jConfig.getVersion();
 
-        return new NamedJob.Jar(generateURL(name), uploadedAt, version, sInfo);
+        return new NamedJob.Jar(new URL(jConfig.getJobJarUrl()), uploadedAt, version, sInfo);
     }
 
     public static JobClusterConfig convertJarToJobClusterConfig(NamedJob.Jar jar ) {
@@ -163,13 +163,13 @@ public class DataFormatAdapter {
         Optional<String> artifactName = extractArtifactName(jar.getUrl());
         String version = jar.getVersion();
         return new JobClusterConfig.Builder()
+                .withJobJarUrl(jar.getUrl().toString())
                 .withArtifactName(artifactName.orElse(""))
                 .withVersion(version)
                 .withSchedulingInfo(jar.getSchedulingInfo())
                 .withUploadedAt(jar.getUploadedAt())
                 .build();
     }
-
 
 
     public static URL generateURL(String artifactName) throws MalformedURLException {
@@ -206,6 +206,34 @@ public class DataFormatAdapter {
         return empty();
     }
 
+    /**
+     * Extracts the base part of an artifact from a URL, excluding the .zip extension if present.
+     * @param jar The URL of the artifact.
+     * @return An optional that, if possible, contains the extracted artifact base name.
+     */
+    public static Optional<String> extractArtifactBaseName(URL jar) {
+        if(jar != null) {
+            String jarStr = jar.toString();
+            return extractArtifactBaseName(jarStr);
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<String> extractArtifactBaseName(String jarStr) {
+        Optional<String> artifactNameOpt = extractArtifactName(jarStr);
+        if (artifactNameOpt.isPresent()) {
+            String artifactName = artifactNameOpt.get();
+            if (artifactName.endsWith(".zip")) {
+                // If the name ends with .zip, remove it
+                return Optional.of(artifactName.substring(0, artifactName.length() - 4));
+            } else {
+                // If there's no .zip extension, return the entire string
+                return Optional.of(artifactName);
+            }
+        }
+        logger.warn("Could not extract artifactBaseName from " + jarStr);
+        return Optional.empty();
+    }
 
     public static NamedJob.SLA convertSLAToNamedJobSLA(io.mantisrx.server.master.domain.SLA sla) {
 
@@ -455,7 +483,7 @@ public class DataFormatAdapter {
 
         // generate job defn
         JobDefinition jobDefn = new JobDefinition(archJob.getName(), archJob.getUser(),
-                artifactName.orElse(""), null,archJob.getParameters(), archJob.getSla(),
+                jarUrl == null ? "" : jarUrl.toString(), artifactName.orElse(""), null, archJob.getParameters(), archJob.getSla(),
                 archJob.getSubscriptionTimeoutSecs(),schedulingInfo, archJob.getNumStages(),archJob.getLabels(), null);
         Optional<JobId> jIdOp = JobId.fromId(archJob.getJobId());
         if(!jIdOp.isPresent()) {
@@ -465,7 +493,7 @@ public class DataFormatAdapter {
         // generate job meta
         MantisJobMetadataImpl mantisJobMetadata = new MantisJobMetadataImpl(jIdOp.get(), archJob.getSubmittedAt(),
                 archJob.getStartedAt(), jobDefn, convertMantisJobStateToJobState(archJob.getState()),
-                archJob.getNextWorkerNumberToUse());
+                archJob.getNextWorkerNumberToUse(), archJob.getHeartbeatIntervalSecs(), archJob.getWorkerTimeoutSecs());
 
 
         // add the stages
@@ -558,6 +586,8 @@ public class DataFormatAdapter {
                 jobMetadata.getTotalStages(),
                 jobMetadata.getSla().orElse(null),
                 convertToMantisJobState(jobMetadata.getState()),
+                jobMetadata.getWorkerTimeoutSecs(),
+                jobMetadata.getHeartbeatIntervalSecs(),
                 jobMetadata.getSubscriptionTimeoutSecs(),
                 jobMetadata.getParameters(),
                 jobMetadata.getNextWorkerNumberToUse(),
@@ -577,12 +607,15 @@ public class DataFormatAdapter {
                 jobMetadata.getTotalStages(),
                 jobMetadata.getSla().orElse(null),
                 convertToMantisJobState(jobMetadata.getState()),
+                jobMetadata.getWorkerTimeoutSecs(),
+                jobMetadata.getHeartbeatIntervalSecs(),
                 jobMetadata.getSubscriptionTimeoutSecs(),
                 jobMetadata.getParameters(),
                 jobMetadata.getNextWorkerNumberToUse(),
                 // TODO need to wire migration config here so it can get persisted
                 null,
-                jobMetadata.getLabels());
+                jobMetadata.getLabels(),
+                jobMetadata.getJobCosts());
     }
 
 

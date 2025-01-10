@@ -18,8 +18,9 @@ package io.mantisrx.server.core;
 
 import io.mantisrx.common.properties.DefaultMantisPropertiesLoader;
 import io.mantisrx.common.properties.MantisPropertiesLoader;
-import io.mantisrx.common.properties.MantisPropertiesService;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicReference;
+import lombok.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,19 +28,31 @@ import org.slf4j.LoggerFactory;
 public class ServiceRegistry {
 
     private static Logger logger = LoggerFactory.getLogger(ServiceRegistry.class);
-    private MantisPropertiesService propertiesService;
+    private final AtomicReference<State> registryRef = new AtomicReference<>(null);
     public static ServiceRegistry INSTANCE = new ServiceRegistry();
 
     private ServiceRegistry() {
-        propertiesService = new MantisPropertiesService(loadMantisPropertiesService());
+    }
+
+    public void setMantisPropertiesService(MantisPropertiesLoader service) {
+        logger.debug("Setting Mantis Properties Service to {}", service);
+        if (!registryRef.compareAndSet(null, new State(service, new Exception()))) {
+            logger.error(
+                "MantisPropertiesService already set to {} as part of the below stacktrace",
+                registryRef.get().getPropertiesLoader(), registryRef.get().getStackTrace());
+        }
     }
 
 
-    public MantisPropertiesService getPropertiesService() {
-        return propertiesService;
+    public MantisPropertiesLoader getPropertiesService() {
+        if (registryRef.get() == null) {
+            setMantisPropertiesService(loadMantisPropertiesLoader());
+        }
+
+        return registryRef.get().getPropertiesLoader();
     }
 
-    private MantisPropertiesLoader loadMantisPropertiesService() {
+    private static MantisPropertiesLoader loadMantisPropertiesLoader() {
         MantisPropertiesLoader mpl = new DefaultMantisPropertiesLoader(new Properties());
         try {
             mpl = (MantisPropertiesLoader) Class.forName("com.netflix.mantis.common.properties.MantisFastPropertiesLoader").getConstructor(Properties.class)
@@ -50,5 +63,9 @@ public class ServiceRegistry {
         return mpl;
     }
 
-
+    @Value
+    class State {
+        MantisPropertiesLoader propertiesLoader;
+        Exception stackTrace;
+    }
 }

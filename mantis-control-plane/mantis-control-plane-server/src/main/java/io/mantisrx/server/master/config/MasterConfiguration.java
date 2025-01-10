@@ -16,10 +16,14 @@
 
 package io.mantisrx.server.master.config;
 
-import io.mantisrx.master.resourcecluster.resourceprovider.ResourceClusterStorageProvider;
+import io.mantisrx.master.jobcluster.job.CostsCalculator;
+import io.mantisrx.master.scheduler.FitnessCalculator;
 import io.mantisrx.server.core.CoreConfiguration;
-import io.mantisrx.server.master.store.KeyValueStore;
+import io.mantisrx.server.core.IKeyValueStore;
+import io.mantisrx.shaded.com.google.common.base.Splitter;
+import io.mantisrx.shaded.com.google.common.collect.ImmutableMap;
 import java.time.Duration;
+import java.util.Map;
 import org.skife.config.Config;
 import org.skife.config.Default;
 import org.skife.config.DefaultNull;
@@ -46,10 +50,7 @@ public interface MasterConfiguration extends CoreConfiguration {
     String getApiStatusUri();
 
     @Config("mantis.master.storageProvider")
-    KeyValueStore getStorageProvider();
-
-    @Config("mantis.master.resourceClusterStorageProvider")
-    ResourceClusterStorageProvider getResourceClusterStorageProvider();
+    IKeyValueStore getStorageProvider();
 
     @Config("mantis.master.resourceClusterProvider")
     String getResourceClusterProvider();
@@ -62,18 +63,9 @@ public interface MasterConfiguration extends CoreConfiguration {
     @DefaultNull
     String getMasterIP();
 
-    @Config("mesos.scheduler.driver.init.timeout.sec")
-    @Default("2")
-    int getMesosSchedulerDriverInitTimeoutSec();
-
-    @Config("mesos.scheduler.driver.init.max.attempts")
-    @Default("3")
-    int getMesosSchedulerDriverInitMaxAttempts();
-
-    @Config("mesos.worker.timeoutSecondsToReportStart")
+    @Config("mantis.worker.timeoutSecondsToReportStart")
     @Default("10")
     int getTimeoutSecondsToReportStart();
-
 
     @Config("mantis.master.leader.mismatch.retry.count")
     @Default("5")
@@ -83,20 +75,17 @@ public interface MasterConfiguration extends CoreConfiguration {
     @Default("true")
     boolean getShutdownCuratorServiceEnabled();
 
+    @Config("mantis.leader.elector.factory")
+    @Default("io.mantisrx.server.core.master.LocalLeaderFactory")
+    String getLeaderElectorFactory();
+
     @Config("mantis.master.api.route.ask.timeout.millis")
     @Default("1000")
     long getMasterApiAskTimeoutMs();
 
-    @Config("mesos.master.location")
-    @Default("localhost:5050")
-    String getMasterLocation();
-
-    @Config("mesos.worker.installDir")
-    String getWorkerInstallDir();
-
-    @Config("mesos.worker.executorscript")
-    @Default("startup.sh")
-    String getWorkerExecutorScript();
+    @Config("mantis.master.api.route.ask.longOperation.timeout.millis")
+    @Default("2500")
+    long getMasterApiLongOperationAskTimeoutMs();
 
     @Config("mantis.worker.machine.definition.maxCpuCores")
     @Default("8")
@@ -117,14 +106,6 @@ public interface MasterConfiguration extends CoreConfiguration {
     @Config("mantis.master.worker.jvm.memory.scale.back.percent")
     @Default("10")
     int getWorkerJvmMemoryScaleBackPercentage();
-
-    @Config("mesos.useSlaveFiltering")
-    @Default("false")
-    boolean getUseSlaveFiltering();
-
-    @Config("mesos.slaveFilter.attributeName")
-    @Default("EC2_AMI_ID")
-    String getSlaveFilterAttributeName();
 
     @Config("mantis.master.active.slave.attribute.name")
     @Default("NETFLIX_AUTO_SCALE_GROUP")
@@ -164,11 +145,6 @@ public interface MasterConfiguration extends CoreConfiguration {
     @Default("Mantis Worker Executor")
     String getWorkerExecutorName();
 
-    @Config("mantis.master.mesos.failover.timeout.secs")
-    @Default("604800.0")
-        // 604800 secs = 1 week
-    double getMesosFailoverTimeOutSecs();
-
     // Sleep interval between consecutive scheduler iterations
     @Config("mantis.master.scheduler.iteration.interval.millis")
     @Default("50")
@@ -183,20 +159,29 @@ public interface MasterConfiguration extends CoreConfiguration {
     @Default("60000") // 1 minute
     int getSchedulerIntervalBetweenRetriesInMs();
 
+    @Config("mantis.master.scheduler.fitnessCalculator.class")
+    @Default("io.mantisrx.master.scheduler.CpuWeightedFitnessCalculator")
+    FitnessCalculator getFitnessCalculator();
+
     default Duration getSchedulerIntervalBetweenRetries() {
         return Duration.ofMillis(getSchedulerIntervalBetweenRetriesInMs());
     }
 
     @Config("mantis.master.scheduler.max-retries")
-    @Default("10")
+    @Default("60")
     int getSchedulerMaxRetries();
 
     @Config("mantis.zookeeper.leader.election.path")
     String getLeaderElectionPath();
 
+    @Config("mantis.worker.heartbeat.intervalv2.secs")
+    @Default("20")
+    long getDefaultWorkerHeartbeatIntervalSecs();
+
+    //todo: fix the property name, ideally to mantis.worker.timeout.secs
     @Config("mantis.worker.heartbeat.interval.secs")
     @Default("60")
-    long getWorkerTimeoutSecs();
+    long getDefaultWorkerTimeoutSecs();
 
     @Config("mantis.worker.heartbeat.interval.init.secs")
     @Default("180")
@@ -221,14 +206,6 @@ public interface MasterConfiguration extends CoreConfiguration {
     @Config("mantis.interval.move.workers.disabled.vms.millis")
     @Default("60000")
     long getIntervalMoveWorkersOnDisabledVMsMillis();
-
-    @Config("mesos.task.reconciliation.interval.secs")
-    @Default("300")
-    long getMesosTaskReconciliationIntervalSecs();
-
-    @Config("mesos.lease.offer.expiry.secs")
-    @Default("300")
-    long getMesosLeaseOfferExpirySecs();
 
     @Config("mantis.jobs.max.jars.per.named.job")
     @Default("10")
@@ -283,10 +260,6 @@ public interface MasterConfiguration extends CoreConfiguration {
     @Config("mantis.master.max.archived.jobs.to.cache")
     @Default("1000")
     int getMaxArchivedJobsToCache();
-
-    @Config("mesos.slave.attribute.zone.name")
-    @Default("AWSZone")
-    String getHostZoneAttributeName();
 
     @Config("mantis.agent.cluster.autoscale.by.attribute.name")
     @Default("CLUSTER_NAME")
@@ -356,6 +329,48 @@ public interface MasterConfiguration extends CoreConfiguration {
     @Default("60000") // 1 minute
     int getAssignmentIntervalInMs();
 
+    @Config("mantis.agent.assignment.scheduler.lease.ms")
+    @Default("100")
+    int getSchedulerLeaseExpirationDurationInMs();
+
+    @Config("mantis.job.costsCalculator.class")
+    @Default("io.mantisrx.master.jobcluster.job.NoopCostsCalculator")
+    CostsCalculator getJobCostsCalculator();
+
+    @Config("mantis.job.worker.max.artifacts.to.cache")
+    @Default("5")
+    int getMaxJobArtifactsToCache();
+
+    @Config("mantis.artifactCaching.jobClusters")
+    @Default("")
+    String getJobClustersWithArtifactCachingEnabled();
+
+    @Config("mantis.artifactCaching.enabled")
+    @Default("true")
+    boolean isJobArtifactCachingEnabled();
+
+    // rate limit actions on resource cluster actor to control backlog.
+    @Config("mantis.master.resource.cluster.actions.permitsPerSecond")
+    @Default("5000")
+    int getResourceClusterActionsPermitsPerSecond();
+
+    @Config("mantis.scheduler.enable-batch")
+    @Default("false")
+    boolean isBatchSchedulingEnabled();
+
+    // Example: "jdk:17"
+    @Config("mantis.scheduler.schedulingConstraints")
+    @Default("")
+    String getSchedulingConstraintsString();
+
+    @Config("mantis.sla.headroomForAcceptedJobs")
+    @Default("3")
+    int getSlaMaxHeadroomForAccepted();
+
+    @Config("mantis.scheduler.handlesAllocationRetries")
+    @Default("true")
+    boolean getSchedulerHandlesAllocationRetries();
+
     default Duration getHeartbeatInterval() {
         return Duration.ofMillis(getHeartbeatIntervalInMs());
     }
@@ -363,4 +378,6 @@ public interface MasterConfiguration extends CoreConfiguration {
     default Duration getMaxAssignmentThreshold() {
         return Duration.ofMillis(getAssignmentIntervalInMs());
     }
+
+    default Map<String, String> getSchedulingConstraints() { return getSchedulingConstraintsString().isEmpty() ? ImmutableMap.of() : Splitter.on(",").withKeyValueSeparator(':').split(getSchedulingConstraintsString());}
 }

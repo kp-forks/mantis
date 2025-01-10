@@ -16,168 +16,44 @@
 
 package io.mantisrx.server.master.store;
 
-import io.mantisrx.shaded.com.google.common.collect.ImmutableMap;
+import io.mantisrx.server.core.IKeyValueStore;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
-import org.apache.commons.lang3.StringUtils;
+import java.util.SortedMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 
 
 /**
- * An abstraction for storage api that behaves like a key-value storage
- * like apache-cassandra.
- * See {@link FileBasedStore}
- * for implementation using files.
+ * The interface has moved to see:
+ * {@link IKeyValueStore}
+ * The move was to enable extensions to provide this implementation
+ * with a clean dependency graph.
  * TODO(hmittal): Add an implementation using SQL, apache-cassandra
  */
-public interface KeyValueStore {
+@Deprecated
+public interface KeyValueStore extends IKeyValueStore {
 
-    KeyValueStore NO_OP = new NoopStore();
+    IKeyValueStore NO_OP = new NoopStore();
 
-    /**
-     * Gets all rows from the table
-     *
-     * @param tableName the tableName/table to read from
-     * @return map partition key to map of secondary keys to actual data
-     */
-    default Map<String, Map<String, String>> getAllRows(String tableName) throws IOException {
-        Map<String, Map<String, String>> results = new HashMap<>();
-        for (String pKey : getAllPartitionKeys(tableName)) {
-            results.computeIfAbsent(pKey, (k) -> new HashMap<>());
-            results.get(pKey).putAll(getAll(tableName, pKey));
-        }
-        return results;
+    static IKeyValueStore noop() {
+        return NO_OP;
+    }
+
+    @Deprecated
+    static IKeyValueStore inMemory() { return new io.mantisrx.server.master.store.InMemoryStore();
     }
 
     /**
-     * Gets all partition keys from the table.
-     * This could be beneficial to call instead of getAllRows
-     * if the data volume in the table is large and you want
-     * to process rows iteratively.
-     *
-     * It iterates on partitionKey instead of primaryKey to
-     * prevent keys from the same partition coming out of order.
-     *
-     * @param tableName the table to read from
-     * @return list of all partition keys
+     * See {@link io.mantisrx.server.master.store.NoopStore}
      */
-    List<String> getAllPartitionKeys(String tableName) throws IOException;
-
-    /**
-     * Gets the row corresponding to primary key (partitionKey, secondaryKey)
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @param secondaryKey secondaryKey for the record
-     * @return data
-     */
-    default String get(String tableName, String partitionKey, String secondaryKey) throws IOException {
-        return getAll(tableName, partitionKey).get(secondaryKey);
-    }
-
-    /**
-     * Gets all rows corresponding to partition key
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @return all records corresponding to partitionKey as a map of secondaryKey -> data
-     */
-    Map<String, String> getAll(String tableName, String partitionKey) throws IOException;
-
-    /**
-     * Adds a row corresponding to primary key (partitionKey, secondaryKey)
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @param secondaryKey secondaryKey for the record
-     * @param data the actual data
-     * @return boolean if the data was saved
-     */
-    default boolean upsert(String tableName, String partitionKey, String secondaryKey, String data) throws IOException {
-        return upsertAll(tableName, partitionKey, ImmutableMap.of(secondaryKey, data));
-    }
-
-    /**
-     * Adds a row corresponding to primary key (partitionKey, secondaryKey)
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @param secondaryKey secondaryKey for the record
-     * @param data the actual data
-     * @param ttl ttl for the record in millis
-     * @return boolean if the data was saved
-     */
-    default boolean upsert(String tableName, String partitionKey, String secondaryKey, String data, Duration ttl) throws IOException {
-        return upsertAll(tableName, partitionKey, ImmutableMap.of(secondaryKey, data), ttl);
-    }
-
-    /**
-     * Adds all row corresponding to partition key.
-     * The rows are passed as a map of secondaryKey -> data
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @param all map of rows
-     * @return boolean if the data was saved
-     */
-    default boolean upsertAll(String tableName, String partitionKey, Map<String, String> all) throws IOException {
-        return upsertAll(tableName, partitionKey, all, Duration.ZERO);
-    }
-
-    /**
-     * Adds all row corresponding to partition key.
-     * The rows are passed as a map of secondaryKey -> data
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @param all map of rows
-     * @param ttl ttl for the record in millis (use null or Duration.ZERO for no expiry)
-     * @return boolean if the data was saved
-     */
-    boolean upsertAll(String tableName, String partitionKey, Map<String, String> all, Duration ttl) throws IOException;
-
-    /**
-     * Deletes a row corresponding to the primary key (partitionKey, secondaryKey)
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @param secondaryKey secondaryKey for the record
-     * @return boolean if row was deleted
-     */
-    boolean delete(String tableName, String partitionKey, String secondaryKey) throws IOException;
-
-    /**
-     * Deletes all rows corresponding to a partition key
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @return boolean if the rows were deleted
-     */
-    boolean deleteAll(String tableName, String partitionKey) throws IOException;
-
-    /**
-     * Helpful method to determine if a row exists in the table
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @param secondaryKey secondaryKey for the record
-     * @return boolean if row exists
-     */
-    default boolean isRowExists(String tableName, String partitionKey, String secondaryKey) throws IOException {
-        Map<String, String> items = getAll(tableName, partitionKey);
-        return items != null && items.containsKey(secondaryKey);
-    }
-
-    /**
-     * Allows searching for all rows that share the prefix (in secondary keys) for partitionKey
-     * @param tableName the tableName/table to read from
-     * @param partitionKey partitionKey for the record
-     * @param prefix secondaryKey for the record; null or blank values are default-ed to empty string
-     * @return
-     */
-    default Map<String, String> getAllWithPrefix(String tableName, String partitionKey, String prefix) throws IOException {
-        String pr = StringUtils.defaultIfBlank(prefix, "");
-        return getAll(tableName, partitionKey).entrySet()
-            .stream().filter(x -> StringUtils.startsWith(x.getKey(), pr))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-    }
-
-    class NoopStore implements KeyValueStore {
+    @Deprecated
+    class NoopStore implements IKeyValueStore {
 
         @Override
         public Map<String, Map<String, String>> getAllRows(String tableName) {
@@ -211,6 +87,71 @@ public interface KeyValueStore {
 
         @Override
         public boolean deleteAll(String tableName, String partitionKey) {
+            return false;
+        }
+    }
+
+    /**
+     * See {@link io.mantisrx.server.master.store.InMemoryStore}
+     */
+    @Deprecated
+    class InMemoryStore implements IKeyValueStore {
+
+        // table -> partitionKey -> secondaryKey -> data
+        private final Map<String, Map<String, SortedMap<String, String>>> store = new ConcurrentHashMap<>();
+
+        @Override
+        public List<String> getAllPartitionKeys(String tableName) {
+            if (store.get(tableName) == null) {
+                return Collections.emptyList();
+            } else{
+                return new ArrayList<>(store.get(tableName).keySet());
+            }
+        }
+
+        @Override
+        public Map<String, String> getAll(String tableName, String partitionKey)
+            throws IOException {
+            if (store.get(tableName) == null) {
+                return Collections.emptyMap();
+            } else if (store.get(tableName).get(partitionKey) == null) {
+                return Collections.emptyMap();
+            } else {
+                return store.get(tableName).get(partitionKey);
+            }
+        }
+
+        @Override
+        public boolean upsertAll(String tableName, String partitionKey, Map<String, String> all,
+            Duration ttl) throws IOException {
+            store.putIfAbsent(tableName, new ConcurrentHashMap<>());
+            SortedMap<String, String> items =
+                store.get(tableName)
+                    .getOrDefault(partitionKey, new ConcurrentSkipListMap<>(Comparator.reverseOrder()));
+            items.putAll(all);
+            store.get(tableName).put(partitionKey, items);
+            return true;
+        }
+
+        @Override
+        public boolean delete(String tableName, String partitionKey, String secondaryKey)
+            throws IOException {
+            if (store.containsKey(tableName) && // table exists
+                store.get(tableName).containsKey(partitionKey) && // partitionKey exists
+                store.get(tableName).get(partitionKey).containsKey(secondaryKey)) { // secondaryKey exists
+                store.get(tableName).get(partitionKey).remove(secondaryKey);
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public boolean deleteAll(String tableName, String partitionKey) throws IOException {
+            if (store.containsKey(tableName) && // table exists
+                store.get(tableName).containsKey(partitionKey)) { // partitionKey exists
+                store.get(tableName).remove(partitionKey);
+                return true;
+            }
             return false;
         }
     }

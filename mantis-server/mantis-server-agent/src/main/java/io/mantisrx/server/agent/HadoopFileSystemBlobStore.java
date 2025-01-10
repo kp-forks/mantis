@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.hadoop.fs.FileSystem;
@@ -30,6 +31,7 @@ import org.apache.hadoop.fs.Path;
  * such as s3, gfs, etc...
  */
 @RequiredArgsConstructor
+@Slf4j
 public class HadoopFileSystemBlobStore implements BlobStore {
 
     //  The file system in which blobs are stored. */
@@ -41,11 +43,12 @@ public class HadoopFileSystemBlobStore implements BlobStore {
     public File get(URI blobUrl) throws IOException {
         final Path src = new Path(blobUrl);
         final Path dest = new Path(getStorageLocation(blobUrl));
-        if (!fileSystem.exists(dest)) {
+        log.info("Getting file with path {}", dest);
+        File destFile = new File(dest.toUri().getPath());
+        if (!destFile.exists()) {
             fileSystem.copyToLocalFile(src, dest);
         }
-
-        return new File(dest.toUri().getPath());
+        return destFile;
     }
 
     @Override

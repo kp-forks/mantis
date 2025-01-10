@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+apply plugin: 'mantis'
+
 ext {
     mqlVersion = '3.2.2'
     mockNeatVersion = '0.3.7'
@@ -29,6 +31,7 @@ dependencies {
     implementation project(':mantis-runtime')
 
     implementation "io.mantisrx:mql-jvm:$mqlVersion"
+    implementation libraries.spectatorApi
 
     implementation libraries.mockneat
     implementation libraries.slf4jApi

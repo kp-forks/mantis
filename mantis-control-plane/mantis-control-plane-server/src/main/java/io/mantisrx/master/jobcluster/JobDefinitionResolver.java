@@ -25,7 +25,10 @@ import io.mantisrx.runtime.descriptor.SchedulingInfo;
 import io.mantisrx.runtime.parameter.Parameter;
 import io.mantisrx.server.master.domain.JobClusterConfig;
 import io.mantisrx.server.master.domain.JobDefinition;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -76,38 +79,45 @@ public class JobDefinitionResolver {
         // inherit params from cluster if not specified
         List<Parameter> parameters = (resolvedJobDefn.getParameters() != null && !resolvedJobDefn.getParameters().isEmpty()) ? resolvedJobDefn.getParameters() : jobClusterMetadata.getJobClusterDefinition().getParameters();
 
-        // inherit labels from cluster if not specified
-        List<Label> labels = (resolvedJobDefn.getLabels() != null && !resolvedJobDefn.getLabels().isEmpty()) ? resolvedJobDefn.getLabels() : jobClusterMetadata.getJobClusterDefinition().getLabels();
+        // Inherit labels from cluster, if resolvedJobDefn has labels, override the existing ones
+        Map<String, Label> labelMap = jobClusterMetadata.getJobClusterDefinition().getLabels().stream()
+            .collect(Collectors.toMap(Label::getName, label -> label));
+        if (resolvedJobDefn.getLabels() != null && !resolvedJobDefn.getLabels().isEmpty()) {
+            resolvedJobDefn.getLabels()
+                .forEach(label -> labelMap.put(label.getName(), label));
+        }
+        List<Label> labels = Collections.unmodifiableList(new ArrayList<>(labelMap.values()));
 
         String artifactName = resolvedJobDefn.getArtifactName();
+        String jobJarUrl = resolvedJobDefn.getJobJarUrl();
         SchedulingInfo schedulingInfo = resolvedJobDefn.getSchedulingInfo();
         String version = resolvedJobDefn.getVersion();
         JobClusterConfig jobClusterConfig = null;
 
-        if(!isNull(artifactName) && !isNull(version) && !schedulingInfoNotValid(schedulingInfo)) {
+        if(!isNull(artifactName) && !isNull(jobJarUrl) && !isNull(version) && !schedulingInfoNotValid(schedulingInfo)) {
             // update cluster ?
 
-        } else if(!isNull(artifactName) && !isNull(version) && schedulingInfoNotValid(schedulingInfo)) { // scheduling Info is not given while new artifact is specified
+        } else if(!isNull(artifactName) && !isNull(jobJarUrl) && !isNull(version) && schedulingInfoNotValid(schedulingInfo)) { // scheduling Info is not given while new artifact is specified
 
             // exception
             String msg = String.format("Scheduling info is not specified during Job Submit for cluster %s while new artifact is specified %s. Job Submit fails", jobClusterMetadata.getJobClusterDefinition().getName(), artifactName);
             logger.warn(msg);
             throw new Exception(msg);
 
-        } else if(!isNull(artifactName) && isNull(version) && !schedulingInfoNotValid(schedulingInfo)) { // artifact & schedulingInfo are given
+        } else if(!isNull(artifactName) && !isNull(jobJarUrl)&& isNull(version) && !schedulingInfoNotValid(schedulingInfo)) { // artifact & schedulingInfo are given
 
             // generate new version and update cluster
             version = String.valueOf(System.currentTimeMillis());
             // update cluster ?
 
-        } else if(!isNull(artifactName) && isNull(version) && schedulingInfoNotValid(schedulingInfo)) { // scheduling info not given while new artifact is specified
+        } else if(!isNull(artifactName) && !isNull(jobJarUrl) && isNull(version) && schedulingInfoNotValid(schedulingInfo)) { // scheduling info not given while new artifact is specified
 
             // exception
             String msg = String.format("Scheduling info is not specified during Job Submit for cluster %s while new artifact %s is specified. Job Submit fails", jobClusterMetadata.getJobClusterDefinition().getName(), artifactName);
             logger.warn(msg);
             throw new Exception(msg);
 
-        } else if(isNull(artifactName) && !isNull(version) && !schedulingInfoNotValid(schedulingInfo)) { // version is given & scheduling info is given
+        } else if(isNull(artifactName) && isNull(jobJarUrl) && !isNull(version) && !schedulingInfoNotValid(schedulingInfo)) { // version is given & scheduling info is given
 
             // fetch JobCluster config for version and validate the given schedulingInfo is compatible
             Optional<JobClusterConfig> clusterConfigForVersion = getJobClusterConfigForVersion(jobClusterMetadata, version);
@@ -126,8 +136,9 @@ public class JobDefinitionResolver {
             }
 
             artifactName = jobClusterConfig.getArtifactName();
+            jobJarUrl = jobClusterConfig.getJobJarUrl();
 
-        } else if(isNull(artifactName) && !isNull(version) && schedulingInfoNotValid(schedulingInfo)) { // Only version is given
+        } else if(isNull(artifactName) && isNull(jobJarUrl) && !isNull(version) && schedulingInfoNotValid(schedulingInfo)) { // Only version is given
 
             // fetch JobCluster config for version
             Optional<JobClusterConfig> clusterConfigForVersion = getJobClusterConfigForVersion(jobClusterMetadata, version);
@@ -140,14 +151,16 @@ public class JobDefinitionResolver {
             jobClusterConfig = clusterConfigForVersion.get();
             schedulingInfo = jobClusterConfig.getSchedulingInfo();
             artifactName = jobClusterConfig.getArtifactName();
+            jobJarUrl = jobClusterConfig.getJobJarUrl();
 
 
-        } else if(isNull(artifactName) && isNull(version) && !schedulingInfoNotValid(schedulingInfo)) { // only scheduling info is given
+        } else if(isNull(artifactName) && isNull(jobJarUrl) && isNull(version) && !schedulingInfoNotValid(schedulingInfo)) { // only scheduling info is given
 
             // fetch latest Job Cluster config
             jobClusterConfig = jobClusterMetadata.getJobClusterDefinition().getJobClusterConfig();
             version = jobClusterConfig.getVersion();
             artifactName = jobClusterConfig.getArtifactName();
+            jobJarUrl = jobClusterConfig.getJobJarUrl();
             // set version to it
             // validate given scheduling info is compatible
             if(!validateSchedulingInfo(schedulingInfo, jobClusterConfig.getSchedulingInfo(), jobClusterMetadata)) {
@@ -157,7 +170,7 @@ public class JobDefinitionResolver {
             }
 
 
-        } else if(isNull(artifactName) && isNull(version) && schedulingInfoNotValid(schedulingInfo)){ // Nothing is given. Use the latest on the cluster
+        } else if(isNull(artifactName) && isNull(jobJarUrl) && isNull(version) && schedulingInfoNotValid(schedulingInfo)){ // Nothing is given. Use the latest on the cluster
 
             // fetch latest job cluster config
             jobClusterConfig = jobClusterMetadata.getJobClusterDefinition().getJobClusterConfig();
@@ -166,16 +179,17 @@ public class JobDefinitionResolver {
             // use scheduling info from that.
             schedulingInfo = jobClusterConfig.getSchedulingInfo();
             artifactName = jobClusterConfig.getArtifactName();
+            jobJarUrl = jobClusterConfig.getJobJarUrl();
 
         } else {
             // exception should never get here.
-            throw new Exception(String.format("Invalid case for resolveJobDefinition artifactName %s version %s schedulingInfo %s", artifactName, version, schedulingInfo));
+            throw new Exception(String.format("Invalid case for resolveJobDefinition artifactName %s jobJarUrl %s version %s schedulingInfo %s", jobJarUrl, artifactName, version, schedulingInfo));
         }
 
-        logger.info("Resolved version {}, schedulingInfo {}, artifactName {}", version, schedulingInfo, artifactName);
+        logger.info("Resolved version {}, schedulingInfo {}, artifactName {}, jobJarUrl {}", version, schedulingInfo, artifactName, jobJarUrl);
 
-        if(isNull(artifactName) || isNull(version) || schedulingInfoNotValid(schedulingInfo)) {
-            String msg = String.format(" SchedulingInfo %s or artifact %s or version %s could not be resolved in JobCluster %s. Job Submit fails", schedulingInfo, artifactName, version, jobClusterMetadata.getJobClusterDefinition().getName());
+        if(isNull(artifactName)  || isNull(jobJarUrl)  || isNull(version) || schedulingInfoNotValid(schedulingInfo)) {
+            String msg = String.format(" SchedulingInfo %s or artifact %s or jobJarUrl %s or version %s could not be resolved in JobCluster %s. Job Submit fails", schedulingInfo, artifactName, jobJarUrl, version, jobClusterMetadata.getJobClusterDefinition().getName());
             logger.warn(msg);
             throw new Exception(msg);
         }
@@ -187,6 +201,7 @@ public class JobDefinitionResolver {
                 .withUser(user)
                 .withVersion(version)
                 .withArtifactName(artifactName)
+                .withJobJarUrl(jobJarUrl)
                 .build();
 
     }

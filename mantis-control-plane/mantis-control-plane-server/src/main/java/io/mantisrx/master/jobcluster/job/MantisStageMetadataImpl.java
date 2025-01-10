@@ -16,6 +16,7 @@
 
 package io.mantisrx.master.jobcluster.job;
 
+import static io.mantisrx.master.StringConstants.MANTIS_STAGE_CONTAINER_SIZE_NAME_KEY;
 import static java.util.Optional.of;
 
 import com.netflix.spectator.impl.Preconditions;
@@ -31,13 +32,22 @@ import io.mantisrx.server.master.WorkerRequest;
 import io.mantisrx.server.master.domain.JobId;
 import io.mantisrx.server.master.persistence.MantisJobStore;
 import io.mantisrx.server.master.persistence.exceptions.InvalidJobException;
+import io.mantisrx.server.master.persistence.exceptions.InvalidWorkerStateChangeException;
 import io.mantisrx.server.master.scheduler.WorkerEvent;
 import io.mantisrx.shaded.com.fasterxml.jackson.annotation.JsonCreator;
 import io.mantisrx.shaded.com.fasterxml.jackson.annotation.JsonIgnore;
 import io.mantisrx.shaded.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.mantisrx.shaded.com.fasterxml.jackson.annotation.JsonProperty;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.slf4j.Logger;
@@ -59,8 +69,9 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
     private final List<JobConstraints> hardConstraints;
     private final List<JobConstraints> softConstraints;
     // scaling policy be null
-    private StageScalingPolicy scalingPolicy;
-    private boolean scalable;
+    private final StageScalingPolicy scalingPolicy;
+    private final boolean scalable;
+    private final String sizeAttribute;
     @JsonIgnore
     private final ConcurrentMap<Integer, JobWorker> workerByIndexMetadataSet;
     @JsonIgnore
@@ -78,6 +89,7 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
      * @param softConstraints
      * @param scalingPolicy
      * @param scalable
+     * @param sizeAttribute
      */
     @JsonCreator
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -89,7 +101,8 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
                                    @JsonProperty("hardConstraints") List<JobConstraints> hardConstraints,
                                    @JsonProperty("softConstraints") List<JobConstraints> softConstraints,
                                    @JsonProperty("scalingPolicy") StageScalingPolicy scalingPolicy,
-                                   @JsonProperty("scalable") boolean scalable) {
+                                   @JsonProperty("scalable") boolean scalable,
+                                   @JsonProperty("sizeAttribute") String sizeAttribute) {
         this.jobId = jobId;
         this.stageNum = stageNum;
         this.numStages = numStages;
@@ -99,6 +112,7 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
         this.softConstraints = softConstraints;
         this.scalingPolicy = scalingPolicy;
         this.scalable = scalable;
+        this.sizeAttribute = sizeAttribute;
         workerByIndexMetadataSet = new ConcurrentHashMap<>();
         workerByNumberMetadataSet = new ConcurrentHashMap<>();
 
@@ -159,6 +173,7 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
         private List<JobConstraints> softConstraints = Collections.emptyList();
         private StageScalingPolicy scalingPolicy;
         private boolean scalable;
+        private String sizeAttribute;
 
         /**
          * Ctor.
@@ -261,6 +276,11 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
             return this;
         }
 
+        public Builder withSizeAttribute(String s) {
+            sizeAttribute = s;
+            return this;
+        }
+
         /**
          * Convenience method to clone data from an old worker of this stage.
          * @param workerRequest
@@ -280,6 +300,7 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
             this.scalingPolicy = (workerRequest.getSchedulingInfo().forStage(
                     workerRequest.getWorkerStage()).getScalingPolicy());
             this.scalable = (workerRequest.getSchedulingInfo().forStage(workerRequest.getWorkerStage()).getScalable());
+            this.sizeAttribute = Optional.ofNullable(workerRequest.getSchedulingInfo().forStage(workerRequest.getWorkerStage()).getContainerAttributes()).map(attrs -> attrs.get(MANTIS_STAGE_CONTAINER_SIZE_NAME_KEY)).orElse(null);
             return this;
         }
 
@@ -300,9 +321,8 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
 
 
             return new MantisStageMetadataImpl(jobId, stageNum, numStages, machineDefinition, numWorkers,
-                    hardConstraints, softConstraints, scalingPolicy, scalable);
+                    hardConstraints, softConstraints, scalingPolicy, scalable, sizeAttribute);
         }
-
     }
 
     /**
@@ -395,6 +415,11 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
         if (worker == null)
             throw new InvalidJobException(jobId, -1, workerNumber);
         return worker;
+    }
+
+    @Override
+    public Optional<String> getSizeAttribute() {
+        return Optional.ofNullable(sizeAttribute);
     }
 
     /**
@@ -554,7 +579,12 @@ public class MantisStageMetadataImpl implements IMantisStageMetadata {
     public Optional<JobWorker> processWorkerEvent(WorkerEvent event, MantisJobStore jobStore) {
         try {
             JobWorker worker = getWorkerByIndex(event.getWorkerId().getWorkerIndex());
-            worker.processEvent(event, jobStore);
+            try {
+                worker.processEvent(event, jobStore);
+            } catch (InvalidWorkerStateChangeException wex) {
+                LOGGER.warn("InvalidWorkerStateChangeException from: ", wex);
+            }
+
             return of(worker);
         } catch (Exception e) {
             LOGGER.warn("Exception saving worker update", e);

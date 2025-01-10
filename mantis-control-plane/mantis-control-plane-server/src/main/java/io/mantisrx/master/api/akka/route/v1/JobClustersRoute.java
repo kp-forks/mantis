@@ -19,7 +19,28 @@ package io.mantisrx.master.api.akka.route.v1;
 import static akka.http.javadsl.server.PathMatchers.segment;
 import static akka.http.javadsl.server.directives.CachingDirectives.alwaysCache;
 import static akka.http.javadsl.server.directives.CachingDirectives.cache;
-import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.*;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.CreateJobClusterRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.DeleteJobClusterRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.DisableJobClusterRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.DisableJobClusterResponse;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.EnableJobClusterRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.EnableJobClusterResponse;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.GetJobClusterRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.GetJobClusterResponse;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.GetLatestJobDiscoveryInfoRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.ListJobClustersRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterArtifactRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterArtifactResponse;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterLabelsRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterLabelsResponse;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterResponse;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterSLARequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterSLAResponse;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterWorkerMigrationStrategyRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClusterWorkerMigrationStrategyResponse;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateSchedulingInfoRequest;
+import static io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateSchedulingInfoResponse;
 
 import akka.actor.ActorSystem;
 import akka.http.caching.javadsl.Cache;
@@ -60,6 +81,7 @@ import org.slf4j.LoggerFactory;
  *  api/v1/jobClusters/{}/actions/updateLabel                   (POST)
  *  api/v1/jobClusters/{}/actions/enableCluster                 (POST)
  *  api/v1/jobClusters/{}/actions/disableCluster                (POST)
+ *  api/v1/jobClusters/{}/actions/updateSchedulingInfo          (POST)
  */
 public class JobClustersRoute extends BaseRoute {
     private static final Logger logger = LoggerFactory.getLogger(JobClustersRoute.class);
@@ -124,6 +146,15 @@ public class JobClustersRoute extends BaseRoute {
                                         // POST
                                         post(() -> updateClusterArtifactRoute(clusterName))
                                 ))
+                        ),
+                        // api/v1/jobClusters/{}/actions/updateSchedulingInfo
+                        path(
+                            PathMatchers.segment().slash("actions").slash("updateSchedulingInfo"),
+                            (clusterName) -> pathEndOrSingleSlash(() -> concat(
+
+                                // POST
+                                post(() -> updateClusterSchedulingInfo(clusterName))
+                            ))
                         ),
 
                         // api/v1/jobClusters/{}/actions/updateSla
@@ -226,42 +257,59 @@ public class JobClustersRoute extends BaseRoute {
 
             logger.info("POST /api/v1/jobClusters called {}", jobClusterDefn);
 
-            final CreateJobClusterRequest createJobClusterRequest =
+            CompletionStage<GetJobClusterResponse> response;
+            final CreateJobClusterRequest createJobClusterRequest;
+            try {
+                createJobClusterRequest =
                     JobClusterProtoAdapter.toCreateJobClusterRequest(jobClusterDefn);
-
-            // sequentially chaining the createJobClusterRequest and getJobClusterRequest
-            // when previous is successful
-            final CompletionStage<GetJobClusterResponse> response =
+                // sequentially chaining the createJobClusterRequest and getJobClusterRequest
+                // when previous is successful
+                response =
                     jobClusterRouteHandler
-                            .create(createJobClusterRequest)
-                            .thenCompose(t -> {
-                                if (t.responseCode.getValue() >= 200 &&
-                                    t.responseCode.getValue() < 300) {
-                                    final GetJobClusterRequest request = new GetJobClusterRequest(
-                                            t.getJobClusterName());
-                                    return jobClusterRouteHandler.getJobClusterDetails(request);
-                                } else {
-                                    CompletableFuture<GetJobClusterResponse> responseCompletableFuture = new CompletableFuture<>();
-                                    responseCompletableFuture.complete(
-                                            new JobClusterManagerProto.GetJobClusterResponse(
-                                                    t.requestId,
-                                                    t.responseCode,
-                                                    t.message,
-                                                    Optional.empty()));
-                                    return responseCompletableFuture;
+                        .create(createJobClusterRequest)
+                        .thenCompose(t -> {
+                            if (t.responseCode.getValue() >= 200 &&
+                                t.responseCode.getValue() < 300) {
+                                final GetJobClusterRequest request = new GetJobClusterRequest(
+                                    t.getJobClusterName());
+                                return jobClusterRouteHandler.getJobClusterDetails(request);
+                            } else {
+                                CompletableFuture<GetJobClusterResponse> responseCompletableFuture =
+                                    new CompletableFuture<>();
+                                responseCompletableFuture.complete(
+                                    new JobClusterManagerProto.GetJobClusterResponse(
+                                        t.requestId,
+                                        t.responseCode,
+                                        t.message,
+                                        Optional.empty()));
+                                return responseCompletableFuture;
+                            }
+                        });
+            } catch (IllegalArgumentException ex) {
+                CompletableFuture<GetJobClusterResponse> resp = new CompletableFuture<>();
+                resp.complete(
+                    new GetJobClusterResponse(
+                        0L,
+                        BaseResponse.ResponseCode.CLIENT_ERROR,
+                        "Invalid request payload: " + ex.getMessage(),
+                        Optional.empty())
+                    );
 
-                                }
-                            });
-
+                response = resp;
+            }
 
             return completeAsync(
-                    response,
-                    resp -> complete(
-                            StatusCodes.CREATED,
+                response,
+                resp -> {
+                    HttpResponse httpResponse = this.toDefaultHttpResponse(resp);
+                    return complete(
+                            httpResponse.status().equals(StatusCodes.OK) ?
+                                StatusCodes.CREATED : httpResponse.status(), // override GET response back to CREATED
                             resp.getJobCluster(),
-                            Jackson.marshaller()),
-                    HttpRequestMetrics.Endpoints.JOB_CLUSTERS,
-                    HttpRequestMetrics.HttpVerb.POST
+                            Jackson.marshaller());
+                },
+                HttpRequestMetrics.Endpoints.JOB_CLUSTERS,
+                HttpRequestMetrics.HttpVerb.POST
             );
         });
     }
@@ -313,42 +361,50 @@ public class JobClustersRoute extends BaseRoute {
         return entity(Jackson.unmarshaller(NamedJobDefinition.class), jobClusterDefn -> {
             logger.info("PUT /api/v1/jobClusters/{} called {}", clusterName, jobClusterDefn);
 
-            final UpdateJobClusterRequest request = JobClusterProtoAdapter
-                    .toUpdateJobClusterRequest(jobClusterDefn);
-
             CompletionStage<UpdateJobClusterResponse> updateResponse;
 
-            if (jobClusterDefn.getJobDefinition() == null) {
-                // if request payload is invalid
+            try {
                 CompletableFuture<UpdateJobClusterResponse> resp = new CompletableFuture<>();
-                resp.complete(
+                final UpdateJobClusterRequest request = JobClusterProtoAdapter
+                    .toUpdateJobClusterRequest(jobClusterDefn);
+                if (jobClusterDefn.getJobDefinition() == null) {
+                    // if request payload is invalid
+                    resp.complete(
                         new UpdateJobClusterResponse(
-                                request.requestId,
-                                BaseResponse.ResponseCode.CLIENT_ERROR,
-                                "Invalid request payload."));
+                            request.requestId,
+                            BaseResponse.ResponseCode.CLIENT_ERROR,
+                            "Invalid request payload."));
 
-                updateResponse = resp;
-            } else if (!clusterName.equals(jobClusterDefn.getJobDefinition().getName())) {
-                // if cluster name specified in request payload does not match with what specified in
-                // the endpoint path segment
-                CompletableFuture<UpdateJobClusterResponse> resp = new CompletableFuture<>();
-                resp.complete(
+                    updateResponse = resp;
+                } else if (!clusterName.equals(jobClusterDefn.getJobDefinition().getName())) {
+                    // if cluster name specified in request payload does not match with what specified in
+                    // the endpoint path segment
+                    resp.complete(
                         new UpdateJobClusterResponse(
-                                request.requestId,
-                                BaseResponse.ResponseCode.CLIENT_ERROR,
-                                String.format(
-                                        "Cluster name specified in request payload %s " +
-                                        "does not match with what specified in resource path %s",
-                                        jobClusterDefn.getJobDefinition().getName(),
-                                        clusterName)));
+                            request.requestId,
+                            BaseResponse.ResponseCode.CLIENT_ERROR,
+                            String.format(
+                                "Cluster name specified in request payload %s " +
+                                    "does not match with what specified in resource path %s",
+                                jobClusterDefn.getJobDefinition().getName(),
+                                clusterName)));
 
-                updateResponse = resp;
-            } else {
-                // everything look ok so far, process the request!
-                updateResponse = jobClusterRouteHandler.update(
+                    updateResponse = resp;
+                } else {
+                    // everything look ok so far, process the request!
+                    updateResponse = jobClusterRouteHandler.update(
                         JobClusterProtoAdapter.toUpdateJobClusterRequest(jobClusterDefn));
-            }
+                }
+            } catch (IllegalArgumentException ex) {
+                CompletableFuture<UpdateJobClusterResponse> resp = new CompletableFuture<>();
+                resp.complete(
+                    new UpdateJobClusterResponse(
+                        0L,
+                        BaseResponse.ResponseCode.CLIENT_ERROR,
+                        "Invalid request payload: " + ex.getMessage()));
 
+                updateResponse = resp;
+            }
 
             CompletionStage<GetJobClusterResponse> response = updateResponse
                     .thenCompose(t -> {
@@ -437,6 +493,25 @@ public class JobClustersRoute extends BaseRoute {
                     resp -> complete(StatusCodes.NO_CONTENT, ""),
                     HttpRequestMetrics.Endpoints.JOB_CLUSTER_INSTANCE_ACTION_UPDATE_ARTIFACT,
                     HttpRequestMetrics.HttpVerb.POST
+            );
+        });
+    }
+
+    private Route updateClusterSchedulingInfo(String clusterName) {
+        return entity(Jackson.unmarshaller(UpdateSchedulingInfoRequest.class), request -> {
+            logger.info(
+                "POST /api/v1/jobClusters/{}/actions/updateSchedulingInfo called {}",
+                clusterName,
+                request);
+
+            CompletionStage<UpdateSchedulingInfoResponse> updateResponse =
+                jobClusterRouteHandler.updateSchedulingInfo(clusterName, request);
+
+            return completeAsync(
+                updateResponse,
+                resp -> complete(StatusCodes.NO_CONTENT, ""),
+                HttpRequestMetrics.Endpoints.JOB_CLUSTER_INSTANCE_ACTION_UPDATE_ARTIFACT,
+                HttpRequestMetrics.HttpVerb.POST
             );
         });
     }

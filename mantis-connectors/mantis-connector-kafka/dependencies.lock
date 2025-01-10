@@ -5,6 +5,12 @@
         }
     },
     "baseline-exact-dependencies-main": {
+        "com.google.code.findbugs:jsr305": {
+            "firstLevelTransitive": [
+                "io.mantisrx:mantis-common"
+            ],
+            "locked": "3.0.1"
+        },
         "com.netflix:mantis-rxnetty": {
             "firstLevelTransitive": [
                 "io.mantisrx:mantis-common"
@@ -99,7 +105,7 @@
             "firstLevelTransitive": [
                 "io.mantisrx:mantis-common"
             ],
-            "locked": "1.1.8.4"
+            "locked": "1.1.10.5"
         }
     },
     "baseline-exact-dependencies-test": {
@@ -117,11 +123,17 @@
         }
     },
     "compileClasspath": {
+        "com.google.code.findbugs:jsr305": {
+            "firstLevelTransitive": [
+                "io.mantisrx:mantis-common"
+            ],
+            "locked": "3.0.1"
+        },
         "com.netflix.archaius:archaius2-api": {
-            "locked": "2.3.17"
+            "locked": "2.3.21"
         },
         "com.netflix.archaius:archaius2-core": {
-            "locked": "2.3.17"
+            "locked": "2.3.21"
         },
         "com.netflix.spectator:spectator-api": {
             "locked": "0.82.0"
@@ -226,7 +238,7 @@
             "firstLevelTransitive": [
                 "io.mantisrx:mantis-common"
             ],
-            "locked": "1.1.8.4"
+            "locked": "1.1.10.5"
         }
     },
     "lombok": {
@@ -235,11 +247,17 @@
         }
     },
     "runtimeClasspath": {
+        "com.google.code.findbugs:jsr305": {
+            "firstLevelTransitive": [
+                "io.mantisrx:mantis-common"
+            ],
+            "locked": "3.0.1"
+        },
         "com.netflix.archaius:archaius2-api": {
-            "locked": "2.3.17"
+            "locked": "2.3.21"
         },
         "com.netflix.archaius:archaius2-core": {
-            "locked": "2.3.17"
+            "locked": "2.3.21"
         },
         "com.netflix.rxjava:rxjava-math": {
             "firstLevelTransitive": [
@@ -362,7 +380,7 @@
                 "io.mantisrx:mantis-remote-observable",
                 "io.mantisrx:mantis-runtime"
             ],
-            "locked": "1.7.25"
+            "locked": "1.7.36"
         },
         "org.slf4j:slf4j-log4j12": {
             "firstLevelTransitive": [
@@ -375,7 +393,7 @@
             "firstLevelTransitive": [
                 "io.mantisrx:mantis-common"
             ],
-            "locked": "1.1.8.4"
+            "locked": "1.1.10.5"
         }
     },
     "testAnnotationProcessor": {
@@ -387,11 +405,17 @@
         "com.github.tomakehurst:wiremock-jre8": {
             "locked": "2.21.0"
         },
+        "com.google.code.findbugs:jsr305": {
+            "firstLevelTransitive": [
+                "io.mantisrx:mantis-common"
+            ],
+            "locked": "3.0.2"
+        },
         "com.netflix.archaius:archaius2-api": {
-            "locked": "2.3.17"
+            "locked": "2.3.21"
         },
         "com.netflix.archaius:archaius2-core": {
-            "locked": "2.3.17"
+            "locked": "2.3.21"
         },
         "com.netflix.spectator:spectator-api": {
             "locked": "0.82.0"
@@ -505,18 +529,24 @@
             "firstLevelTransitive": [
                 "io.mantisrx:mantis-common"
             ],
-            "locked": "1.1.8.4"
+            "locked": "1.1.10.5"
         }
     },
     "testRuntimeClasspath": {
         "com.github.tomakehurst:wiremock-jre8": {
             "locked": "2.21.0"
         },
+        "com.google.code.findbugs:jsr305": {
+            "firstLevelTransitive": [
+                "io.mantisrx:mantis-common"
+            ],
+            "locked": "3.0.2"
+        },
         "com.netflix.archaius:archaius2-api": {
-            "locked": "2.3.17"
+            "locked": "2.3.21"
         },
         "com.netflix.archaius:archaius2-core": {
-            "locked": "2.3.17"
+            "locked": "2.3.21"
         },
         "com.netflix.rxjava:rxjava-math": {
             "firstLevelTransitive": [
@@ -648,7 +678,7 @@
                 "io.mantisrx:mantis-remote-observable",
                 "io.mantisrx:mantis-runtime"
             ],
-            "locked": "1.7.25"
+            "locked": "1.7.36"
         },
         "org.slf4j:slf4j-log4j12": {
             "firstLevelTransitive": [
@@ -661,7 +691,7 @@
             "firstLevelTransitive": [
                 "io.mantisrx:mantis-common"
             ],
-            "locked": "1.1.8.4"
+            "locked": "1.1.10.5"
         }
     }
 }

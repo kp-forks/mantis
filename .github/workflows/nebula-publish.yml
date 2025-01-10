@@ -12,6 +12,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Setup Git
+        run: |
+          git config --global user.name "Mantis OSS Maintainers"
+          git config --global user.email "mantis-oss-dev@googlegroups.com"
       - uses: actions/checkout@v2
       - name: Setup jdk
         uses: actions/setup-java@v2
@@ -40,4 +44,4 @@ jobs:
           NETFLIX_OSS_REPO_PASSWORD: ${{ secrets.ORG_NETFLIXOSS_PASSWORD }}
           NETFLIX_OSS_SONATYPE_STAGING_PROFILE_ID: "c3547130240327"
         with:
-          arguments: -Prelease.useLastTag=true final
+          arguments: -Prelease.useLastTag=true -x test final

@@ -16,7 +16,7 @@
 
 package io.mantisrx.runtime.sink;
 
-import io.mantisrx.common.properties.MantisPropertiesService;
+import io.mantisrx.common.properties.MantisPropertiesLoader;
 import io.mantisrx.runtime.Context;
 import io.mantisrx.runtime.Metadata;
 import io.mantisrx.runtime.PortRequest;
@@ -24,6 +24,7 @@ import io.mantisrx.runtime.sink.predicate.Predicate;
 import io.mantisrx.server.core.ServiceRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelOption;
+import io.netty.channel.WriteBufferWaterMark;
 import io.reactivex.mantis.network.push.PushServerSse;
 import io.reactivex.mantis.network.push.PushServers;
 import io.reactivex.mantis.network.push.Routers;
@@ -54,7 +55,7 @@ public class ServerSentEventsSink<T> implements SelfDocumentingSink<T> {
     private Func2<Map<String, List<String>>, Context, Void> requestPreprocessor;
     private Func2<Map<String, List<String>>, Context, Void> requestPostprocessor;
     private int port = -1;
-    private final MantisPropertiesService propService;
+    private final MantisPropertiesLoader propService;
 
     private PushServerSse<T, Context> pushServerSse;
     private HttpServer<ByteBuf, ServerSentEvent> httpServer;
@@ -64,8 +65,8 @@ public class ServerSentEventsSink<T> implements SelfDocumentingSink<T> {
     }
 
     ServerSentEventsSink(Func1<T, String> encoder,
-        Func1<Throwable, String> errorEncoder,
-        Predicate<T> predicate) {
+                         Func1<Throwable, String> errorEncoder,
+                         Predicate<T> predicate) {
         if (errorEncoder == null) {
             // default
             errorEncoder = Throwable::getMessage;
@@ -127,6 +128,11 @@ public class ServerSentEventsSink<T> implements SelfDocumentingSink<T> {
         return Integer.parseInt(maxChunkSize);
     }
 
+    private int maxNotWritableTimeSec() {
+        String maxNotWritableTimeSec = propService.getStringValue("mantis.sse.maxNotWritableTimeSec", "-1");
+        return Integer.parseInt(maxNotWritableTimeSec);
+    }
+
     private int bufferCapacity() {
         String bufferCapacityString = propService.getStringValue("mantis.sse.bufferCapacity", "25000");
         return Integer.parseInt(bufferCapacityString);
@@ -140,7 +146,7 @@ public class ServerSentEventsSink<T> implements SelfDocumentingSink<T> {
     @Override
     public void call(Context context, PortRequest portRequest, final Observable<T> observable) {
         port = portRequest.getPort();
-        if (runNewSseServerImpl(context.getWorkerInfo().getJobName())) {
+        if (runNewSseServerImpl(context.getWorkerInfo().getJobClusterName())) {
             LOG.info("Serving modern HTTP SSE server sink on port: " + port);
 
             String serverName = "SseSink";
@@ -154,7 +160,8 @@ public class ServerSentEventsSink<T> implements SelfDocumentingSink<T> {
                 .bufferCapacity(bufferCapacity())
                 .numQueueConsumers(numConsumerThreads())
                 .useSpscQueue(useSpsc())
-                .maxChunkTimeMSec(getBatchInterval());
+                .maxChunkTimeMSec(getBatchInterval())
+                .maxNotWritableTimeSec(maxNotWritableTimeSec());
             if (predicate != null) {
                 config.predicate(predicate.getPredicate());
             }
@@ -178,8 +185,7 @@ public class ServerSentEventsSink<T> implements SelfDocumentingSink<T> {
                         context,
                         batchInterval))
                 .pipelineConfigurator(PipelineConfigurators.<ByteBuf>serveSseConfigurator())
-                .channelOption(ChannelOption.WRITE_BUFFER_HIGH_WATER_MARK, 5 * 1024 * 1024)
-                .channelOption(ChannelOption.WRITE_BUFFER_LOW_WATER_MARK, 1024 * 1024)
+                .channelOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1024 * 1024, 5 * 1024 * 1024))
                 .build();
             httpServer.start();
         }

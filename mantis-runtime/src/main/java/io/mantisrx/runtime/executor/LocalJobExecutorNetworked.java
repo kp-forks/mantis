@@ -16,6 +16,7 @@
 
 package io.mantisrx.runtime.executor;
 
+import io.mantisrx.common.MantisProperties;
 import io.mantisrx.common.WorkerPorts;
 import io.mantisrx.common.metrics.MetricsRegistry;
 import io.mantisrx.common.metrics.MetricsServer;
@@ -183,7 +184,8 @@ public class LocalJobExecutorNetworked {
 
         // create job context
         Map parameterDefinitions = job.getParameterDefinitions();
-        final String user = Optional.ofNullable(System.getenv("USER")).orElse("userUnknown");
+        final String user = Optional.ofNullable(MantisProperties.getProperty("USER")).orElse(
+            "userUnknown");
         String jobId = String.format("localJob-%s-%d", user, (int) (Math.random() * 10000));
         logger.info("jobID {}", jobId);
         final ServiceLocator serviceLocator = lifecycle.getServiceLocator();
@@ -233,7 +235,8 @@ public class LocalJobExecutorNetworked {
                         workerInfo,
                         MetricsRegistry.getInstance(), () -> {
                     System.exit(0);
-                }, workerMapObservable);
+                }, workerMapObservable,
+                    Thread.currentThread().getContextClassLoader());
 
                 // workers for stage 1
                 workerInfoMap.put(1, workerInfoList);
@@ -278,7 +281,8 @@ public class LocalJobExecutorNetworked {
                         ParameterUtils.createContextParameters(parameterDefinitions,
                                 parameters),
                         serviceLocator, workerInfo,
-                        MetricsRegistry.getInstance(), nullAction, workerMapObservable);
+                        MetricsRegistry.getInstance(), nullAction, workerMapObservable,
+                    Thread.currentThread().getContextClassLoader());
 
                 startSource(i, sourcePort, nextStageScalingInfo.getNumberOfInstances(),
                         job.getSource(), currentStage, context, workersInStageOneObservable);
@@ -311,7 +315,8 @@ public class LocalJobExecutorNetworked {
                             ParameterUtils.createContextParameters(parameterDefinitions,
                                     parameters),
                             serviceLocator, workerInfo,
-                            MetricsRegistry.getInstance(), nullAction, workerMapObservable);
+                            MetricsRegistry.getInstance(), nullAction, workerMapObservable,
+                        Thread.currentThread().getContextClassLoader());
 
 
                     startIntermediate(previousPorts, port, currentStage, context, j,
@@ -357,7 +362,8 @@ public class LocalJobExecutorNetworked {
                         ParameterUtils.createContextParameters(parameterDefinitions,
                                 parameters),
                         serviceLocator, workerInfo,
-                        MetricsRegistry.getInstance(), nullAction, workerMapObservable);
+                        MetricsRegistry.getInstance(), nullAction, workerMapObservable,
+                    Thread.currentThread().getContextClassLoader());
 
 
                 startSink(previousStage, previousPorts, currentStage, () -> workerInfo.getWorkerPorts().getSinkPort(), sink,
@@ -383,7 +389,7 @@ public class LocalJobExecutorNetworked {
         return Observable.create(new OnSubscribe<Set<Endpoint>>() {
             @Override
             public void call(Subscriber<? super Set<Endpoint>> subscriber) {
-                Set<Endpoint> endpoints = new HashSet<Endpoint>();
+                Set<Endpoint> endpoints = new HashSet<>();
                 for (int i = 0; i < ports.length; i++) {
                     int port = ports[i];
                     for (int j = 1; j <= numPartitions; j++) {

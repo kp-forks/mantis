@@ -6,7 +6,7 @@ Random sampling uniformly downsamples the stream to a percentage of its original
 establish random sampling through a sampling clause like the following:
 
 ```
-select * from stream SAMPLE {'strategy': 'RANDOM', 'threshold': 200, 'factor': 10000}
+select * from stream SAMPLE {"strategy": "RANDOM", "threshold": 200, "factor": 10000}
 ```
 
 For each item in the stream, a numeric hash is generated. That hash is modded by `factor` to produce
@@ -21,7 +21,7 @@ you want to sample over the same set of values but retrieve a different sample o
 example:
 
 ```
-select * from stream SAMPLE {'strategy': 'RANDOM', 'threshold': 200, 'factor': 10000, 'salt': 123}
+select * from stream SAMPLE {"strategy": "RANDOM", "threshold": 200, "factor": 10000, "salt": 123}
 ```
 
 ## Sticky Sampling
@@ -31,11 +31,22 @@ will observe all events which contain that specific `zipcode`. Sticky sampling c
 a query like such:
 
 ```
-select * from stream SAMPLE {'strategy':'STICKY', 'keys':['zipcode'], 'threshold':200, 'factor':10000, 'salt': 1}
+select * from stream SAMPLE {"strategy": "STICKY", "keys":["zipcode"], "threshold": 200, "factor": 10000, "salt": 1}
 ```
 
 The query above should retrieve 2% of the total stream (see [Random Sampling](#random-sampling)
 above for why), predicated on the events being uniformly distributed over the `zipcode`s.
+
+### How sticky sampling works
+Sticky sampling extracts values from the event that correspond to fields specified in `keys` array. `null` values are filtered out and remaining values concatenated to generate a hash. A uniform random sampling is performed on the hash to select values consistently.
+
+For eg: For `keys: ["zipcode", "zipcode_alt", "state"]`, following will be concatenated result to hash-based-sampler:
+
+| zipcode | zipcode_alt | state | concat-result   |
+| ------- | ----------- | ----- | --------------- |
+| 100001  | null        | NY    | 100001NY        |
+| null    | 100001      | NY    | 100001NY        |
+| 100001  | 100001      | NY    | 100001100001NY  |
 
 <!-- Do not edit below this line -->
 <!-- START -->

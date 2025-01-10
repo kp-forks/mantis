@@ -121,7 +121,7 @@ public class TwitterJob extends MantisJobProvider<String> {
         }
 
         LocalJobExecutorNetworked.execute(new TwitterJob().getJobInstance(),
-                new Parameter(TwitterSource.CONSUMER_KEY_PARAM,consumerKey),
+                new Parameter(TwitterSource.CONSUMER_KEY_PARAM, consumerKey),
                 new Parameter(TwitterSource.CONSUMER_SECRET_PARAM, consumerSecret),
                 new Parameter(TwitterSource.TOKEN_PARAM, token),
                 new Parameter(TwitterSource.TOKEN_SECRET_PARAM, tokenSecret)

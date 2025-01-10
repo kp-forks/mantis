@@ -21,6 +21,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import io.mantisrx.common.Label;
+import io.mantisrx.master.jobcluster.LabelManager.SystemLabels;
 import io.mantisrx.runtime.JobConstraints;
 import io.mantisrx.runtime.JobOwner;
 import io.mantisrx.runtime.MachineDefinition;
@@ -50,16 +51,13 @@ public class JobDefinitionResolverTest {
     public static final String DEFAULT_ARTIFACT_NAME = "myart";
     public static final String DEFAULT_VERSION = "0.0.1";
 
-    private JobClusterDefinitionImpl createFakeJobClusterDefn(String clusterName) {
-        return createFakeJobClusterDefn(clusterName, Lists.newArrayList(), Lists.newArrayList(), NO_OP_SLA, SINGLE_WORKER_SCHED_INFO);
-    }
-
     private JobClusterDefinitionImpl createFakeJobClusterDefn(String clusterName, List<Label> labels, List<Parameter> parameters) {
         return createFakeJobClusterDefn(clusterName, labels, parameters, NO_OP_SLA, SINGLE_WORKER_SCHED_INFO);
     }
 
     private JobClusterDefinitionImpl createFakeJobClusterDefn(String clusterName, List<Label> labels, List<Parameter> parameters, SLA sla, SchedulingInfo schedulingInfo)  {
         JobClusterConfig clusterConfig = new JobClusterConfig.Builder()
+                .withJobJarUrl("http://" + DEFAULT_ARTIFACT_NAME)
                 .withArtifactName(DEFAULT_ARTIFACT_NAME)
                 .withSchedulingInfo(schedulingInfo)
                 .withVersion(DEFAULT_VERSION)
@@ -83,6 +81,7 @@ public class JobDefinitionResolverTest {
         List<Label> labels = new ArrayList<>();
         Label label = new Label("l1", "lv1");
         labels.add(label);
+        labels.add(new Label(SystemLabels.MANTIS_RESOURCE_CLUSTER_NAME_LABEL.label, "testcluster"));
 
         List<Parameter> parameters = new ArrayList<>();
         Parameter parameter = new Parameter("paramName", "paramValue");
@@ -94,21 +93,23 @@ public class JobDefinitionResolverTest {
 
         String version = "0.0.2";
         String artifactName = "myArt2";
+        String artifactUrl = "http://foo/bar/" + artifactName;
         SchedulingInfo schedulingInfo = TWO_WORKER_SCHED_INFO;
 
         try {
-            JobDefinition givenJobDefn = new JobDefinition.Builder().withArtifactName(artifactName).withName(clusterName).withSchedulingInfo(schedulingInfo).withVersion(version).build();
+            JobDefinition givenJobDefn = new JobDefinition.Builder().withJobJarUrl(artifactUrl).withArtifactName(artifactName).withName(clusterName).withSchedulingInfo(schedulingInfo).withVersion(version).build();
             JobDefinitionResolver resolver = new JobDefinitionResolver();
             JobDefinition resolvedJobDefinition = resolver.getResolvedJobDefinition("user", givenJobDefn, jobClusterMetadata);
 
             // assert the specified values are being used
             assertEquals(artifactName, resolvedJobDefinition.getArtifactName());
+            assertEquals(artifactUrl, resolvedJobDefinition.getJobJarUrl().toString());
             assertEquals(schedulingInfo, resolvedJobDefinition.getSchedulingInfo());
             assertEquals(version, resolvedJobDefinition.getVersion());
 
             // assert the parameters and labels are inherited since they were not specified
 
-            assertEquals(1, resolvedJobDefinition.getLabels().size());
+            assertEquals(2, resolvedJobDefinition.getLabels().size());
             assertEquals(label, resolvedJobDefinition.getLabels().get(0));
 
             assertEquals(1, resolvedJobDefinition.getParameters().size());
@@ -124,12 +125,13 @@ public class JobDefinitionResolverTest {
 
         // Only ArtifactName and schedInfo is specified
         try {
-            JobDefinition givenJobDefn = new JobDefinition.Builder().withArtifactName(artifactName).withName(clusterName).withSchedulingInfo(schedulingInfo).build();
+            JobDefinition givenJobDefn = new JobDefinition.Builder().withJobJarUrl(artifactUrl).withArtifactName(artifactName).withName(clusterName).withSchedulingInfo(schedulingInfo).build();
             JobDefinitionResolver resolver = new JobDefinitionResolver();
             JobDefinition resolvedJobDefinition = resolver.getResolvedJobDefinition("user", givenJobDefn, jobClusterMetadata);
 
             // assert the specified values are being used
             assertEquals(artifactName, resolvedJobDefinition.getArtifactName());
+            assertEquals(artifactUrl, resolvedJobDefinition.getJobJarUrl().toString());
             assertEquals(schedulingInfo, resolvedJobDefinition.getSchedulingInfo());
             // assert a version no was generated
             assertTrue(resolvedJobDefinition.getVersion()!= null && !resolvedJobDefinition.getVersion().isEmpty());
@@ -137,7 +139,7 @@ public class JobDefinitionResolverTest {
 
             // assert the parameters and labels are inherited since they were not specified
 
-            assertEquals(1, resolvedJobDefinition.getLabels().size());
+            assertEquals(2, resolvedJobDefinition.getLabels().size());
             assertEquals(label, resolvedJobDefinition.getLabels().get(0));
 
             assertEquals(1, resolvedJobDefinition.getParameters().size());
@@ -160,6 +162,7 @@ public class JobDefinitionResolverTest {
         List<Label> labels = new ArrayList<>();
         Label label = new Label("l1", "lv1");
         labels.add(label);
+        labels.add(new Label(SystemLabels.MANTIS_RESOURCE_CLUSTER_NAME_LABEL.label, "testcluster"));
 
         List<Parameter> parameters = new ArrayList<>();
         Parameter parameter = new Parameter("paramName", "paramValue");
@@ -171,10 +174,11 @@ public class JobDefinitionResolverTest {
 
         String version = "0.0.2";
         String artifactName = "myArt2";
+        String artifactUrl = "http://foo/bar/" + artifactName;
 
         // Only new artifact and version is specified
         try {
-            JobDefinition givenJobDefn = new JobDefinition.Builder().withArtifactName(artifactName).withName(clusterName).withVersion(version).build();
+            JobDefinition givenJobDefn = new JobDefinition.Builder().withJobJarUrl(artifactUrl).withArtifactName(artifactName).withName(clusterName).withVersion(version).build();
             JobDefinitionResolver resolver = new JobDefinitionResolver();
             JobDefinition resolvedJobDefinition = resolver.getResolvedJobDefinition("user", givenJobDefn, jobClusterMetadata);
             fail();
@@ -186,7 +190,7 @@ public class JobDefinitionResolverTest {
 
         // Only new artifact is specified
         try {
-            JobDefinition givenJobDefn = new JobDefinition.Builder().withArtifactName(artifactName).withName(clusterName).build();
+            JobDefinition givenJobDefn = new JobDefinition.Builder().withJobJarUrl("http://" + artifactName).withArtifactName(artifactName).withName(clusterName).build();
             JobDefinitionResolver resolver = new JobDefinitionResolver();
             JobDefinition resolvedJobDefinition = resolver.getResolvedJobDefinition("user", givenJobDefn, jobClusterMetadata);
             fail();
@@ -204,6 +208,7 @@ public class JobDefinitionResolverTest {
         List<Label> labels = new ArrayList<>();
         Label label = new Label("l1", "lv1");
         labels.add(label);
+        labels.add(new Label(SystemLabels.MANTIS_RESOURCE_CLUSTER_NAME_LABEL.label, "testcluster"));
 
         List<Parameter> parameters = new ArrayList<>();
         Parameter parameter = new Parameter("paramName", "paramValue");
@@ -227,6 +232,7 @@ public class JobDefinitionResolverTest {
 
             // artifact will get populated using the given version.
             assertEquals(DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getArtifactName());
+            assertEquals("http://" + DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getJobJarUrl().toString());
             // scheduling info will be the one specified by us
             assertEquals(schedulingInfo, resolvedJobDefinition.getSchedulingInfo());
             // version should match what we set.
@@ -234,7 +240,7 @@ public class JobDefinitionResolverTest {
 
             // assert the parameters and labels are inherited since they were not specified
 
-            assertEquals(1, resolvedJobDefinition.getLabels().size());
+            assertEquals(2, resolvedJobDefinition.getLabels().size());
             assertEquals(label, resolvedJobDefinition.getLabels().get(0));
 
             assertEquals(1, resolvedJobDefinition.getParameters().size());
@@ -256,6 +262,7 @@ public class JobDefinitionResolverTest {
 
             // assert the artifact is inherited
             assertEquals(DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getArtifactName());
+            assertEquals("http://" + DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getJobJarUrl().toString());
             // assert the scheduling info is inherited
             assertEquals(SINGLE_WORKER_SCHED_INFO, resolvedJobDefinition.getSchedulingInfo());
             // assert a version is the one we gave
@@ -264,7 +271,7 @@ public class JobDefinitionResolverTest {
 
             // assert the parameters and labels are inherited since they were not specified
 
-            assertEquals(1, resolvedJobDefinition.getLabels().size());
+            assertEquals(2, resolvedJobDefinition.getLabels().size());
             assertEquals(label, resolvedJobDefinition.getLabels().get(0));
 
             assertEquals(1, resolvedJobDefinition.getParameters().size());
@@ -288,6 +295,7 @@ public class JobDefinitionResolverTest {
         List<Label> labels = new ArrayList<>();
         Label label = new Label("l1", "lv1");
         labels.add(label);
+        labels.add(new Label(SystemLabels.MANTIS_RESOURCE_CLUSTER_NAME_LABEL.label, "testcluster"));
 
         List<Parameter> parameters = new ArrayList<>();
         Parameter parameter = new Parameter("paramName", "paramValue");
@@ -310,6 +318,7 @@ public class JobDefinitionResolverTest {
 
             // artifact will get populated using the given version.
             assertEquals(DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getArtifactName());
+            assertEquals("http://" + DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getJobJarUrl().toString());
             // scheduling info will be the one specified by us
             assertEquals(schedulingInfo, resolvedJobDefinition.getSchedulingInfo());
             // version should match the latest on the cluster
@@ -317,7 +326,7 @@ public class JobDefinitionResolverTest {
 
             // assert the parameters and labels are inherited since they were not specified
 
-            assertEquals(1, resolvedJobDefinition.getLabels().size());
+            assertEquals(2, resolvedJobDefinition.getLabels().size());
             assertEquals(label, resolvedJobDefinition.getLabels().get(0));
 
             assertEquals(1, resolvedJobDefinition.getParameters().size());
@@ -339,6 +348,7 @@ public class JobDefinitionResolverTest {
 
             // assert the artifact is inherited
             assertEquals(DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getArtifactName());
+            assertEquals("http://" + DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getJobJarUrl().toString());
             // assert the scheduling info is inherited
             assertEquals(SINGLE_WORKER_SCHED_INFO, resolvedJobDefinition.getSchedulingInfo());
             // assert a version is the dfeault one.
@@ -347,7 +357,7 @@ public class JobDefinitionResolverTest {
 
             // assert the parameters and labels are inherited since they were not specified
 
-            assertEquals(1, resolvedJobDefinition.getLabels().size());
+            assertEquals(2, resolvedJobDefinition.getLabels().size());
             assertEquals(label, resolvedJobDefinition.getLabels().get(0));
 
             assertEquals(1, resolvedJobDefinition.getParameters().size());
@@ -369,6 +379,7 @@ public class JobDefinitionResolverTest {
 
             // assert the artifact is inherited
             assertEquals(DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getArtifactName());
+            assertEquals("http://" + DEFAULT_ARTIFACT_NAME, resolvedJobDefinition.getJobJarUrl().toString());
             // assert the scheduling info is inherited
             assertEquals(SINGLE_WORKER_SCHED_INFO, resolvedJobDefinition.getSchedulingInfo());
             // assert a version is the dfeault one.
@@ -377,7 +388,7 @@ public class JobDefinitionResolverTest {
 
             // assert the parameters and labels are inherited since they were not specified
 
-            assertEquals(1, resolvedJobDefinition.getLabels().size());
+            assertEquals(2, resolvedJobDefinition.getLabels().size());
             assertEquals(label, resolvedJobDefinition.getLabels().get(0));
 
             assertEquals(1, resolvedJobDefinition.getParameters().size());
@@ -401,6 +412,7 @@ public class JobDefinitionResolverTest {
         List<Label> labels = new ArrayList<>();
         Label label = new Label("l1", "lv1");
         labels.add(label);
+        labels.add(new Label(SystemLabels.MANTIS_RESOURCE_CLUSTER_NAME_LABEL.label, "testcluster"));
 
         List<Parameter> parameters = new ArrayList<>();
         Parameter parameter = new Parameter("paramName", "paramValue");
@@ -427,13 +439,16 @@ public class JobDefinitionResolverTest {
 
         String clusterName = "lookupJobClusterConfigTest";
         JobClusterConfig clusterConfig1 = new JobClusterConfig.Builder()
+                .withJobJarUrl("http://" + DEFAULT_ARTIFACT_NAME)
                 .withArtifactName(DEFAULT_ARTIFACT_NAME)
                 .withSchedulingInfo(SINGLE_WORKER_SCHED_INFO)
                 .withVersion(DEFAULT_VERSION)
                 .build();
 
+        String artifactName = "artifact2";
         JobClusterConfig clusterConfig2 = new JobClusterConfig.Builder()
-                .withArtifactName("artifact2")
+                .withJobJarUrl("http://" + artifactName)
+                .withArtifactName(artifactName)
                 .withSchedulingInfo(TWO_WORKER_SCHED_INFO)
                 .withVersion("0.0.2")
                 .build();
@@ -446,7 +461,7 @@ public class JobDefinitionResolverTest {
                 .withJobClusterConfigs(configList)
                 .withName(clusterName)
                 .withParameters(Lists.newArrayList())
-                .withLabels(Lists.newArrayList())
+                .withLabel(new Label(SystemLabels.MANTIS_RESOURCE_CLUSTER_NAME_LABEL.label, "testcluster"))
                 .withUser("user")
                 .withIsReadyForJobMaster(true)
                 .withOwner(DEFAULT_JOB_OWNER)
@@ -461,6 +476,7 @@ public class JobDefinitionResolverTest {
         Optional<JobClusterConfig> config = resolver.getJobClusterConfigForVersion(jobClusterMetadata, DEFAULT_VERSION);
         assertTrue(config.isPresent());
         assertEquals(DEFAULT_ARTIFACT_NAME, config.get().getArtifactName());
+        assertEquals("http://" + DEFAULT_ARTIFACT_NAME, config.get().getJobJarUrl());
         assertEquals(DEFAULT_VERSION, config.get().getVersion());
         assertEquals(SINGLE_WORKER_SCHED_INFO, config.get().getSchedulingInfo());
 
@@ -468,6 +484,7 @@ public class JobDefinitionResolverTest {
         Optional<JobClusterConfig> config2 = resolver.getJobClusterConfigForVersion(jobClusterMetadata, "0.0.2");
         assertTrue(config2.isPresent());
         assertEquals("artifact2", config2.get().getArtifactName());
+        assertEquals("http://artifact2", config2.get().getJobJarUrl());
         assertEquals("0.0.2", config2.get().getVersion());
         assertEquals(TWO_WORKER_SCHED_INFO, config2.get().getSchedulingInfo());
 

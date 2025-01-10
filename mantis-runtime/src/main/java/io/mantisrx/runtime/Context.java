@@ -20,6 +20,7 @@ import io.mantisrx.common.metrics.MetricsRegistry;
 import io.mantisrx.runtime.lifecycle.LifecycleNoOp;
 import io.mantisrx.runtime.lifecycle.ServiceLocator;
 import io.mantisrx.runtime.parameter.Parameters;
+import javax.annotation.Nullable;
 import rx.Observable;
 import rx.functions.Action0;
 import rx.subjects.BehaviorSubject;
@@ -48,11 +49,15 @@ public class Context {
     private Observable<Boolean> prevStageCompletedObservable = BehaviorSubject.create(false);
     // An Observable providing details of all workers of the current job
     private Observable<WorkerMap> workerMapObservable = Observable.empty();
+    // Custom class loader
+    @Nullable
+    private final ClassLoader classLoader;
 
     /**
      * For testing only
      */
     public Context() {
+        this.classLoader = null;
         completeAndExitAction = () -> {
             // no-op
         };
@@ -60,11 +65,11 @@ public class Context {
 
     public Context(Parameters parameters, ServiceLocator serviceLocator, WorkerInfo workerInfo,
                    MetricsRegistry metricsRegistry, Action0 completeAndExitAction) {
-        this(parameters, serviceLocator, workerInfo, metricsRegistry, completeAndExitAction, Observable.empty());
+        this(parameters, serviceLocator, workerInfo, metricsRegistry, completeAndExitAction, Observable.empty(), null);
     }
 
     public Context(Parameters parameters, ServiceLocator serviceLocator, WorkerInfo workerInfo,
-                   MetricsRegistry metricsRegistry, Action0 completeAndExitAction, Observable<WorkerMap> workerMapObservable) {
+                   MetricsRegistry metricsRegistry, Action0 completeAndExitAction, Observable<WorkerMap> workerMapObservable, @Nullable ClassLoader classLoader) {
         this.parameters = parameters;
         this.serviceLocator = serviceLocator;
         this.workerInfo = workerInfo;
@@ -73,6 +78,7 @@ public class Context {
             throw new IllegalArgumentException("Null complete action provided in Context contructor");
         this.completeAndExitAction = completeAndExitAction;
         this.workerMapObservable = workerMapObservable;
+        this.classLoader = classLoader;
     }
 
 
@@ -83,7 +89,7 @@ public class Context {
     /**
      * Returns the Job Parameters associated with the current job
      *
-     * @return
+     * @return Parameters
      */
 
     public Parameters getParameters() {
@@ -97,7 +103,7 @@ public class Context {
     /**
      * Returns the JobId of the current job.
      *
-     * @return
+     * @return String
      */
     public String getJobId() {
         return workerInfo.getJobId();
@@ -106,7 +112,7 @@ public class Context {
     /**
      * Returns information related to the current worker
      *
-     * @return
+     * @return WorkerInfo
      */
     public WorkerInfo getWorkerInfo() {
         return workerInfo;
@@ -153,11 +159,12 @@ public class Context {
      * Returns an Observable of WorkerMap for the current Job. The user can use this Observable
      * to track the location information of all the workers of the current job.
      *
-     * @return
+     * @return Observable
      */
     public Observable<WorkerMap> getWorkerMapObservable() {
         return this.workerMapObservable;
     }
 
-
+    @Nullable
+    public ClassLoader getClassLoader() { return this.classLoader; }
 }

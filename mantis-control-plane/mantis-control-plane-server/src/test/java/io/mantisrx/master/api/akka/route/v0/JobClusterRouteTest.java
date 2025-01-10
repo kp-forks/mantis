@@ -55,12 +55,14 @@ import io.mantisrx.master.events.LifecycleEventPublisherImpl;
 import io.mantisrx.master.events.StatusEventSubscriberLoggingImpl;
 import io.mantisrx.master.events.WorkerEventSubscriberLoggingImpl;
 import io.mantisrx.master.jobcluster.MantisJobClusterMetadataView;
+import io.mantisrx.master.jobcluster.job.CostsCalculator;
 import io.mantisrx.master.jobcluster.proto.JobClusterManagerProto;
 import io.mantisrx.master.scheduler.FakeMantisScheduler;
 import io.mantisrx.server.master.persistence.FileBasedPersistenceProvider;
 import io.mantisrx.server.master.persistence.MantisJobStore;
 import io.mantisrx.server.master.scheduler.MantisScheduler;
 import io.mantisrx.server.master.scheduler.MantisSchedulerFactory;
+import io.mantisrx.server.master.store.FileBasedStore;
 import io.mantisrx.shaded.com.fasterxml.jackson.core.type.TypeReference;
 import java.io.IOException;
 import java.time.Duration;
@@ -72,8 +74,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.junit.AfterClass;
-import org.junit.BeforeClass;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -112,8 +116,11 @@ public class JobClusterRouteTest {
     private static CompletionStage<ServerBinding> binding;
     private static ActorSystem system = ActorSystem.create("JobClusterRoutes");
 
-    @BeforeClass
-    public static void setup() throws Exception {
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    @Before
+    public void setup() throws Exception {
         TestHelpers.setupMasterConfig();
         final CountDownLatch latch = new CountDownLatch(1);
 
@@ -125,7 +132,13 @@ public class JobClusterRouteTest {
 
                 final LifecycleEventPublisher lifecycleEventPublisher = new LifecycleEventPublisherImpl(new AuditEventSubscriberLoggingImpl(), new StatusEventSubscriberLoggingImpl(), new WorkerEventSubscriberLoggingImpl());
 
-                ActorRef jobClustersManagerActor = system.actorOf(JobClustersManagerActor.props(new MantisJobStore(new FileBasedPersistenceProvider(true)), lifecycleEventPublisher), "jobClustersManager");
+                ActorRef jobClustersManagerActor = system.actorOf(
+                    JobClustersManagerActor.props(
+                        new MantisJobStore(new FileBasedPersistenceProvider(new FileBasedStore(temporaryFolder.newFolder("test")))),
+                        lifecycleEventPublisher,
+                        CostsCalculator.noop(),
+                        0),
+                    "jobClustersManager");
                 MantisSchedulerFactory fakeSchedulerFactory = mock(MantisSchedulerFactory.class);
                 MantisScheduler fakeScheduler = new FakeMantisScheduler(jobClustersManagerActor);
                 when(fakeSchedulerFactory.forJob(any())).thenReturn(fakeScheduler);
@@ -502,18 +515,10 @@ public class JobClusterRouteTest {
     }
 
     private void testJobClusterDelete() throws InterruptedException {
-        final CountDownLatch latch = new CountDownLatch(1);
         final CompletionStage<HttpResponse> responseFuture = http.singleRequest(
             HttpRequest.POST(namedJobAPIEndpoint("delete"))
                 .withEntity(HttpEntities.create(ContentTypes.APPLICATION_JSON, JobClusterPayloads.JOB_CLUSTER_DELETE)));
-        responseFuture
-            .thenCompose(r -> processRespFut(r, 200))
-            .whenComplete((msg, t) -> {
-                String responseMessage = getResponseMessage(msg, t);
-                logger.info("got response {}", responseMessage);
-                assertEquals("sine-function deleted", responseMessage);
-                latch.countDown();
-            });
-        assertTrue(latch.await(latchTimeout.getSeconds(), TimeUnit.SECONDS));
+        HttpResponse response = responseFuture.toCompletableFuture().join();
+        assertEquals("sine-function deleted", processRespFut(response, 200).toCompletableFuture().join());
     }
 }

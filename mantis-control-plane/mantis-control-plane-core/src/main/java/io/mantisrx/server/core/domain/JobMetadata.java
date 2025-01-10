@@ -20,66 +20,46 @@ import io.mantisrx.runtime.descriptor.SchedulingInfo;
 import io.mantisrx.runtime.parameter.Parameter;
 import java.net.URL;
 import java.util.List;
+import lombok.Getter;
 
-
+@Getter
 public class JobMetadata {
 
     private final String jobId;
     private final URL jobJarUrl;
+    private final String jobVersion;
     private final int totalStages;
     private final String user;
     private final SchedulingInfo schedulingInfo;
     private final List<Parameter> parameters;
     private final long subscriptionTimeoutSecs;
+    private final long heartbeatIntervalSecs;
     private final long minRuntimeSecs;
 
     public JobMetadata(final String jobId,
                        final URL jobJarUrl,
+                       final String jobVersion,
                        final int totalStages,
                        final String user,
                        final SchedulingInfo schedulingInfo,
                        final List<Parameter> parameters,
                        final long subscriptionTimeoutSecs,
+                       final long heartbeatIntervalSecs,
                        final long minRuntimeSecs) {
         this.jobId = jobId;
         this.jobJarUrl = jobJarUrl;
+        this.jobVersion = jobVersion;
         this.totalStages = totalStages;
         this.user = user;
         this.schedulingInfo = schedulingInfo;
         this.parameters = parameters;
         this.subscriptionTimeoutSecs = subscriptionTimeoutSecs;
+        this.heartbeatIntervalSecs = heartbeatIntervalSecs;
         this.minRuntimeSecs = minRuntimeSecs;
     }
 
-    public String getJobId() {
-        return jobId;
-    }
-
-    public URL getJobJarUrl() {
-        return jobJarUrl;
-    }
-
-    public int getTotalStages() {
-        return totalStages;
-    }
-
-    public String getUser() {
-        return user;
-    }
-
-    public List<Parameter> getParameters() {
-        return parameters;
-    }
-
-    public SchedulingInfo getSchedulingInfo() {
-        return schedulingInfo;
-    }
-
-    public long getSubscriptionTimeoutSecs() {
-        return subscriptionTimeoutSecs;
-    }
-
-    public long getMinRuntimeSecs() {
-        return minRuntimeSecs;
+    public ArtifactID getJobArtifact() {
+        final String urlString = jobJarUrl.toString();
+        return ArtifactID.of(urlString.substring(urlString.lastIndexOf('/') + 1));
     }
 }

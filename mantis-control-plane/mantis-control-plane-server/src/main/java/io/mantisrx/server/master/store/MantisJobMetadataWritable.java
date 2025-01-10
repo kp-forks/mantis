@@ -33,6 +33,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
+import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,9 +44,13 @@ public class MantisJobMetadataWritable implements MantisJobMetadata {
 
     private static final Logger logger = LoggerFactory.getLogger(MantisJobMetadataWritable.class);
 
+    @Getter
     private final String user;
+    @Getter
     private final JobSla sla;
+    @Getter
     private final long subscriptionTimeoutSecs;
+    @Getter
     private final List<Label> labels;
     @JsonIgnore
     private final ConcurrentMap<Integer, MantisStageMetadataWritable> stageMetadataMap;
@@ -53,18 +58,34 @@ public class MantisJobMetadataWritable implements MantisJobMetadata {
     private final ConcurrentMap<Integer, Integer> workerNumberToStageMap;
     @JsonIgnore
     private final ReentrantLock lock = new ReentrantLock();
+    @Getter
     private String jobId;
+    @Getter
     private String name;
+    @Getter
     private long submittedAt;
+    @Getter
     private long startedAt = DEFAULT_STARTED_AT_EPOCH;
+
+    @Getter
     private URL jarUrl;
+    @Getter
     private volatile MantisJobState state;
-    private int numStages;
-    private List<Parameter> parameters;
+    @Getter
+    private final int numStages;
+    @Getter
+    private final List<Parameter> parameters;
+    @Getter
     private int nextWorkerNumberToUse = 1;
-    private WorkerMigrationConfig migrationConfig;
+    @Getter
+    private final WorkerMigrationConfig migrationConfig;
     @JsonIgnore
     private Object sink; // ToDo need to figure out what object we store for sink
+    @Getter
+    private final long heartbeatIntervalSecs;
+    @Getter
+    private final long workerTimeoutSecs;
+
     @JsonCreator
     @JsonIgnoreProperties(ignoreUnknown = true)
     public MantisJobMetadataWritable(@JsonProperty("jobId") String jobId,
@@ -76,6 +97,8 @@ public class MantisJobMetadataWritable implements MantisJobMetadata {
                                      @JsonProperty("numStages") int numStages,
                                      @JsonProperty("sla") JobSla sla,
                                      @JsonProperty("state") MantisJobState state,
+                                     @JsonProperty("workerTimeoutSecs") long workerTimeoutSecs,
+                                     @JsonProperty("heartbeatIntervalSecs") long heartbeatIntervalSecs,
                                      @JsonProperty("subscriptionTimeoutSecs") long subscriptionTimeoutSecs,
                                      @JsonProperty("parameters") List<Parameter> parameters,
                                      @JsonProperty("nextWorkerNumberToUse") int nextWorkerNumberToUse,
@@ -92,6 +115,8 @@ public class MantisJobMetadataWritable implements MantisJobMetadata {
         this.sla = sla;
         this.state = state == null ? MantisJobState.Accepted : state;
         this.subscriptionTimeoutSecs = subscriptionTimeoutSecs;
+        this.heartbeatIntervalSecs = heartbeatIntervalSecs;
+        this.workerTimeoutSecs = workerTimeoutSecs;
         this.stageMetadataMap = new ConcurrentHashMap<>();
         this.workerNumberToStageMap = new ConcurrentHashMap<>();
         if (parameters == null) {
@@ -119,66 +144,8 @@ public class MantisJobMetadataWritable implements MantisJobMetadata {
         };
     }
 
-    @Override
-    public String getJobId() {
-        return jobId;
-    }
-
-    @Override
-    public String getName() {
-        return name;
-    }
-
-    @Override
-    public String getUser() {
-        return user;
-    }
-
-    @Override
-    public long getSubmittedAt() {
-        return submittedAt;
-    }
-
-    @Override
-    public long getStartedAt() { return startedAt;}
-
-    @Override
-    public URL getJarUrl() {
-        return jarUrl;
-    }
-
-    @Override
-    public JobSla getSla() {
-        return sla;
-    }
-
-    @Override
-    public List<Parameter> getParameters() {
-        return parameters;
-    }
-
-    @Override
-    public List<Label> getLabels() {
-        return labels;
-    }
-
-    @Override
-    public long getSubscriptionTimeoutSecs() {
-        return subscriptionTimeoutSecs;
-    }
-
-    @Override
-    public int getNextWorkerNumberToUse() {
-        return nextWorkerNumberToUse;
-    }
-
     public void setNextWorkerNumberToUse(int n) {
         this.nextWorkerNumberToUse = n;
-    }
-
-    @Override
-    public WorkerMigrationConfig getMigrationConfig() {
-        return this.migrationConfig;
     }
 
     void setJobState(MantisJobState state) throws InvalidJobStateChangeException {
@@ -187,20 +154,10 @@ public class MantisJobMetadataWritable implements MantisJobMetadata {
         this.state = state;
     }
 
-    @Override
-    public MantisJobState getState() {
-        return state;
-    }
-
     @JsonIgnore
     @Override
     public Collection<? extends MantisStageMetadata> getStageMetadata() {
         return stageMetadataMap.values();
-    }
-
-    @Override
-    public int getNumStages() {
-        return numStages;
     }
 
     @JsonIgnore
@@ -220,17 +177,34 @@ public class MantisJobMetadataWritable implements MantisJobMetadata {
         return stageMetadataMap.putIfAbsent(msmd.getStageNum(), msmd) == null;
     }
 
-    public boolean addWorkerMedata(int stageNum, MantisWorkerMetadata workerMetadata, MantisWorkerMetadata replacedWorker)
-            throws InvalidJobException {
-        boolean result = true;
-        if (!stageMetadataMap.get(stageNum).replaceWorkerIndex(workerMetadata, replacedWorker))
-            result = false;
-        Integer integer = workerNumberToStageMap.put(workerMetadata.getWorkerNumber(), stageNum);
-        if (integer != null && integer != stageNum) {
-            logger.error(String.format("Unexpected to put worker number mapping from %d to stage %d for job %s, prev mapping to stage %d",
+    /**
+     * Add the given MantisWorkerMetadata instance to the corresponding stage.
+     * If the stage worker index already exists, replace it only when the given worker has higher worker number.
+     * @param stageNum target stage number.
+     * @param workerMetadata new worker metadata instance.
+     * @return null if the given worker metadata is added to this job. Otherwise, return the existing worker with
+     * newer number.
+     */
+    public MantisWorkerMetadata tryAddOrReplaceWorker(int stageNum, MantisWorkerMetadata workerMetadata) {
+        final boolean result =
+            stageMetadataMap.get(stageNum)
+                .replaceWorkerIndex(workerMetadata);
+
+        if (result) {
+            Integer integer = workerNumberToStageMap.put(workerMetadata.getWorkerNumber(), stageNum);
+            if (integer != null && integer != stageNum) {
+                logger.error(String.format("Unexpected to put worker number mapping from %d to stage %d for job %s, prev mapping to stage %d",
                     workerMetadata.getWorkerNumber(), stageNum, workerMetadata.getJobId(), integer));
+            }
+            return null;
+        } else {
+            try {
+                return stageMetadataMap.get(stageNum).getWorkerByIndex(workerMetadata.getWorkerIndex());
+            } catch (InvalidJobException e) {
+                logger.error("Failed to fetch existing worker when new worker got rejected: {}", workerMetadata, e);
+                throw new RuntimeException("Failed to fetch existing worker when new worker got rejected", e);
+            }
         }
-        return result;
     }
 
     @JsonIgnore

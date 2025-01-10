@@ -24,8 +24,6 @@ import static org.mockito.Mockito.mock;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.testkit.javadsl.TestKit;
-import com.netflix.fenzo.VirtualMachineCurrentState;
-import com.netflix.fenzo.VirtualMachineLease;
 import com.netflix.mantis.master.scheduler.TestHelpers;
 import io.mantisrx.master.events.AuditEventSubscriberLoggingImpl;
 import io.mantisrx.master.events.LifecycleEventPublisher;
@@ -44,12 +42,12 @@ import io.mantisrx.server.master.domain.IJobClusterDefinition;
 import io.mantisrx.server.master.domain.JobDefinition;
 import io.mantisrx.server.master.domain.JobId;
 import io.mantisrx.server.master.persistence.MantisJobStore;
+import io.mantisrx.server.master.scheduler.BatchScheduleRequest;
 import io.mantisrx.server.master.scheduler.MantisScheduler;
 import io.mantisrx.server.master.scheduler.ScheduleRequest;
 import io.mantisrx.server.master.scheduler.WorkerOnDisabledVM;
 import io.mantisrx.shaded.com.google.common.collect.Lists;
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -108,7 +106,7 @@ public class JobTestMigrationTests {
                     .withNextWorkerNumToUse(1)
                     .withJobDefinition(jobDefn)
                     .build();
-            final ActorRef jobActor = system.actorOf(JobActor.props(jobClusterDefn, mantisJobMetaData, jobStoreMock, schedulerMock, eventPublisher));
+            final ActorRef jobActor = system.actorOf(JobActor.props(jobClusterDefn, mantisJobMetaData, jobStoreMock, schedulerMock, eventPublisher, CostsCalculator.noop()));
 
             jobActor.tell(new JobProto.InitJob(probe.getRef()), probe.getRef());
             JobProto.JobInitialized initMsg = probe.expectMsgClass(JobProto.JobInitialized.class);
@@ -179,11 +177,13 @@ public class JobTestMigrationTests {
         }
 
         @Override
-        public void scheduleWorker(ScheduleRequest scheduleRequest) {
-            // TODO Auto-generated method stub
-            System.out.println("----------------------> schedule Worker Called");
-            schedL.countDown();
+        public void scheduleWorkers(BatchScheduleRequest scheduleRequest) {
+            // TODO:
+        }
 
+        @Override
+        public void unscheduleJob(String jobId) {
+            // TODO:
         }
 
         @Override
@@ -211,47 +211,9 @@ public class JobTestMigrationTests {
         }
 
         @Override
-        public void rescindOffer(String offerId) {
-            // TODO Auto-generated method stub
-
+        public boolean schedulerHandlesAllocationRetries(){
+            return false;
         }
-
-        @Override
-        public void rescindOffers(String hostname) {
-            // TODO Auto-generated method stub
-
-        }
-
-        @Override
-        public void addOffers(List<VirtualMachineLease> offers) {
-            // TODO Auto-generated method stub
-
-        }
-
-        @Override
-        public void disableVM(String hostname, long durationMillis) throws IllegalStateException {
-            // TODO Auto-generated method stub
-
-        }
-
-        @Override
-        public void enableVM(String hostname) {
-            // TODO Auto-generated method stub
-
-        }
-
-        @Override
-        public List<VirtualMachineCurrentState> getCurrentVMState() {
-            // TODO Auto-generated method stub
-            return null;
-        }
-
-        @Override
-        public void setActiveVmGroups(List<String> activeVmGroups) {
-            // TODO Auto-generated method stub
-
-        }
-
     }
 
     public static void main(String[] args) {

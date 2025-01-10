@@ -23,7 +23,6 @@ import static org.mockito.Mockito.mock;
 
 import io.mantisrx.common.WorkerPorts;
 import io.mantisrx.common.util.DelegateClock;
-import io.mantisrx.master.resourcecluster.ResourceClusterActor.TaskExecutorState;
 import io.mantisrx.runtime.MachineDefinition;
 import io.mantisrx.server.core.TestingRpcService;
 import io.mantisrx.server.core.domain.WorkerId;
@@ -33,6 +32,7 @@ import io.mantisrx.server.master.resourcecluster.TaskExecutorID;
 import io.mantisrx.server.master.resourcecluster.TaskExecutorRegistration;
 import io.mantisrx.server.master.resourcecluster.TaskExecutorReport;
 import io.mantisrx.server.master.resourcecluster.TaskExecutorStatusChange;
+import io.mantisrx.server.master.resourcecluster.TaskExecutorTaskCancelledException;
 import io.mantisrx.server.master.scheduler.JobMessageRouter;
 import io.mantisrx.server.worker.TaskExecutorGateway;
 import io.mantisrx.shaded.com.google.common.collect.ImmutableList;
@@ -75,7 +75,7 @@ public class TaskExecutorStateTest {
     }
 
     @Test
-    public void testRegularLifecycle() {
+    public void testRegularLifecycle() throws TaskExecutorTaskCancelledException {
         Instant currentTime;
         // Registration
         assertTrue(state.onRegistration(
@@ -132,7 +132,7 @@ public class TaskExecutorStateTest {
     }
 
     @Test
-    public void testInitializationLifecycle() {
+    public void testInitializationLifecycle() throws TaskExecutorTaskCancelledException {
         Instant currentTime;
         // Registration
         assertTrue(state.onRegistration(TaskExecutorRegistration.builder()

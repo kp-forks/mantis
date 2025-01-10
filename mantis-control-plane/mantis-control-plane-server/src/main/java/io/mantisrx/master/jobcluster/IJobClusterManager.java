@@ -16,6 +16,7 @@
 
 package io.mantisrx.master.jobcluster;
 
+import io.mantisrx.master.JobClustersManagerActor.UpdateSchedulingInfo;
 import io.mantisrx.master.jobcluster.proto.JobClusterManagerProto;
 import io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.DisableJobClusterRequest;
 import io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.EnableJobClusterRequest;
@@ -36,7 +37,6 @@ import io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.UpdateJobClust
 import io.mantisrx.master.jobcluster.proto.JobClusterProto;
 import io.mantisrx.master.jobcluster.proto.JobClusterProto.DeleteJobClusterRequest;
 import io.mantisrx.master.jobcluster.proto.JobClusterProto.EnforceSLARequest;
-import io.mantisrx.master.jobcluster.proto.JobClusterProto.ExpireOldJobsRequest;
 import io.mantisrx.master.jobcluster.proto.JobClusterProto.InitializeJobClusterRequest;
 import io.mantisrx.master.jobcluster.proto.JobClusterProto.JobStartedEvent;
 import io.mantisrx.master.jobcluster.proto.JobClusterProto.KillJobRequest;
@@ -99,6 +99,8 @@ public interface IJobClusterManager {
 
     void onJobClusterUpdateArtifact(UpdateJobClusterArtifactRequest artifactReq);
 
+    void onJobClusterUpdateSchedulingInfo(UpdateSchedulingInfo request);
+
     void onJobClusterUpdateWorkerMigrationConfig(UpdateJobClusterWorkerMigrationStrategyRequest req);
 
     void onScaleStage(ScaleStageRequest scaleStage);
@@ -106,8 +108,6 @@ public interface IJobClusterManager {
     void onResubmitWorker(ResubmitWorkerRequest r);
 
     void onJobIdList(ListJobIdsRequest request);
-
-    void onExpireOldJobs(ExpireOldJobsRequest request);
 
     void onListArchivedWorkers(ListArchivedWorkersRequest request);
 

@@ -17,8 +17,8 @@
 package io.mantisrx.server.agent;
 
 import com.mantisrx.common.utils.Services;
+import io.mantisrx.common.properties.MantisPropertiesLoader;
 import io.mantisrx.runtime.loader.ClassLoaderHandle;
-import io.mantisrx.runtime.loader.SinkSubscriptionStateHandler;
 import io.mantisrx.runtime.loader.TaskFactory;
 import io.mantisrx.runtime.loader.config.WorkerConfiguration;
 import io.mantisrx.server.core.MantisAkkaRpcSystemLoader;
@@ -29,7 +29,6 @@ import io.mantisrx.shaded.com.google.common.util.concurrent.AbstractIdleService;
 import io.mantisrx.shaded.com.google.common.util.concurrent.MoreExecutors;
 import io.vavr.Tuple;
 import io.vavr.Tuple2;
-import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -53,12 +52,26 @@ import org.apache.flink.runtime.rpc.RpcUtils;
 public class TaskExecutorStarter extends AbstractIdleService {
     private final TaskExecutor taskExecutor;
     private final HighAvailabilityServices highAvailabilityServices;
+    private final RpcSystem rpcSystem;
 
     @Override
     protected void startUp() {
+        // RxJava 1.x’s  rx.ring-buffer.size property stores the size of any in-memory ring buffers that RxJava
+        // uses when an Observable cannot keep up with rate of event emissions. The ring buffer size is explicitly
+        // set to a low number (8) because different platforms have different defaults for this value. While the
+        // Java Virtual Machine (JVM) default is 128 items per ring buffer, Android has a much lower limit of 16.
+        // 1024 is a well-tested value in Netflix on many production use cases.
+        // source: From https://www.uber.com/blog/rxjava-backpressure/
+        System.setProperty("rx.ring-buffer.size", "1024");
+
         highAvailabilityServices.startAsync().awaitRunning();
 
         taskExecutor.start();
+        try {
+            taskExecutor.awaitRunning().get();
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
     }
 
     @Override
@@ -68,7 +81,12 @@ public class TaskExecutorStarter extends AbstractIdleService {
             .exceptionally(throwable -> null)
             .thenCompose(dontCare -> Services.stopAsync(highAvailabilityServices,
                 MoreExecutors.directExecutor()))
+            .thenRunAsync(rpcSystem::close)
             .get();
+    }
+
+    public TaskExecutor getTaskExecutor() {
+        return this.taskExecutor;
     }
 
     public static TaskExecutorStarterBuilder builder(WorkerConfiguration workerConfiguration) {
@@ -79,6 +97,7 @@ public class TaskExecutorStarter extends AbstractIdleService {
     public static class TaskExecutorStarterBuilder {
         private final WorkerConfiguration workerConfiguration;
         private Configuration configuration;
+        private MantisPropertiesLoader propertiesLoader;
         @Nullable
         private RpcSystem rpcSystem;
         @Nullable
@@ -87,11 +106,10 @@ public class TaskExecutorStarter extends AbstractIdleService {
         private ClassLoaderHandle classLoaderHandle;
         private final HighAvailabilityServices highAvailabilityServices;
         @Nullable
-        private SinkSubscriptionStateHandler.Factory sinkSubscriptionHandlerFactory;
-        @Nullable
         private TaskFactory taskFactory;
 
         private final List<Tuple2<TaskExecutor.Listener, Executor>> listeners = new ArrayList<>();
+
 
         private TaskExecutorStarterBuilder(WorkerConfiguration workerConfiguration) {
             this.workerConfiguration = workerConfiguration;
@@ -159,41 +177,32 @@ public class TaskExecutorStarter extends AbstractIdleService {
             }
         }
 
-        public TaskExecutorStarterBuilder sinkSubscriptionHandlerFactory(SinkSubscriptionStateHandler.Factory sinkSubscriptionHandlerFactory) {
-            this.sinkSubscriptionHandlerFactory = sinkSubscriptionHandlerFactory;
-            return this;
-        }
-
         public TaskExecutorStarterBuilder addListener(TaskExecutor.Listener listener, Executor executor) {
             this.listeners.add(Tuple.of(listener, executor));
             return this;
         }
 
-        private SinkSubscriptionStateHandler.Factory getSinkSubscriptionHandlerFactory() {
-            if (this.sinkSubscriptionHandlerFactory == null) {
-                return SinkSubscriptionStateHandler.Factory.forEphemeralJobsThatNeedToBeKilledInAbsenceOfSubscriber(
-                    highAvailabilityServices.getMasterClientApi(),
-                    Clock.systemDefaultZone());
-            } else {
-                return this.sinkSubscriptionHandlerFactory;
-            }
+        public TaskExecutorStarterBuilder propertiesLoader(MantisPropertiesLoader propertiesLoader) {
+            this.propertiesLoader = propertiesLoader;
+            return this;
         }
 
         public TaskExecutorStarter build() throws Exception {
             final TaskExecutor taskExecutor =
                 new TaskExecutor(
                     getRpcService(),
-                    workerConfiguration,
+                    Preconditions.checkNotNull(workerConfiguration, "WorkerConfiguration for TaskExecutor is null"),
+                    Preconditions.checkNotNull(propertiesLoader, "propertiesLoader for TaskExecutor is null"),
                     highAvailabilityServices,
                     getClassLoaderHandle(),
-                    getSinkSubscriptionHandlerFactory(),
-                    this.taskFactory);
+                    this.taskFactory
+                );
 
             for (Tuple2<TaskExecutor.Listener, Executor> listener : listeners) {
                 taskExecutor.addListener(listener._1(), listener._2());
             }
 
-            return new TaskExecutorStarter(taskExecutor, highAvailabilityServices);
+            return new TaskExecutorStarter(taskExecutor, highAvailabilityServices, getRpcSystem());
         }
     }
 }
