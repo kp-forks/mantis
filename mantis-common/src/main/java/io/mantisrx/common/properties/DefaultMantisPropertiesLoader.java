@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Netflix, Inc.
+ * Copyright 2023 Netflix, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package io.mantisrx.common.properties;
 
+import io.mantisrx.common.MantisProperties;
 import java.util.Map;
 import java.util.Properties;
 
@@ -37,28 +38,8 @@ public class DefaultMantisPropertiesLoader implements MantisPropertiesLoader {
     @Override
     public String getStringValue(String name, String defaultVal) {
         if (name != null) {
-            if (env.containsKey("JOB_PARAM_" + name)) {
-                System.out.println(" Parameter overridden in job " + name + " value " + env.get("JOB_PARAM_" + name));
-                return env.get("JOB_PARAM_" + name);
-            } else if (env.containsKey(name)) {
-                System.out.println(" Property set on env " + name + " value " + env.get(name));
-                return env.get(name);
-            }
-        } //
+            return MantisProperties.getProperty("JOB_PARAM_" + name, MantisProperties.getProperty(name, defaultVal));
+        }
         return defaultVal;
-
-
-    }
-
-    @Override
-    public void initalize() {
-        // TODO Auto-generated method stub
-
-    }
-
-    @Override
-    public void shutdown() {
-        // TODO Auto-generated method stub
-
     }
 }

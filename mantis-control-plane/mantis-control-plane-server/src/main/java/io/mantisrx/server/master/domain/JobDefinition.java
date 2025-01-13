@@ -30,6 +30,7 @@ import io.mantisrx.runtime.descriptor.StageSchedulingInfo;
 import io.mantisrx.runtime.parameter.Parameter;
 import io.mantisrx.server.master.resourcecluster.ClusterID;
 import io.mantisrx.shaded.com.fasterxml.jackson.annotation.JsonCreator;
+import io.mantisrx.shaded.com.fasterxml.jackson.annotation.JsonIgnore;
 import io.mantisrx.shaded.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.mantisrx.shaded.com.fasterxml.jackson.annotation.JsonProperty;
 import io.mantisrx.shaded.com.google.common.base.Preconditions;
@@ -43,14 +44,18 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.ToString;
+import org.apache.commons.lang3.tuple.Pair;
 
 @ToString
 public class JobDefinition {
 
     private final String name;
     private final String user;
+    private final String jobJarUrl;
     private final String artifactName;
     private final String version;
 
@@ -61,11 +66,22 @@ public class JobDefinition {
     private final DeploymentStrategy deploymentStrategy;
     private final int withNumberOfStages;
     private Map<String, Label> labels; // Map label->name to label instance.
+    /**
+     * A map of scheduling constraints deduced from labels.
+     * The constraints are extracted from labels matching the "MANTIS_SCHEDULING_ATTRIBUTE_LABEL_REGEX" pattern.
+     * Only the contents of the capturing group (i.e., the key that comes after "_mantis.schedulingConstraint.")
+     * are saved. These values are then used as constraints during worker scheduling.
+     */
+    private final Map<String, String> schedulingConstraints;
+
+    private final static Pattern MANTIS_SCHEDULING_ATTRIBUTE_LABEL_REGEX =
+        Pattern.compile("_mantis\\.schedulingAttribute\\.(.+)", Pattern.CASE_INSENSITIVE);
 
     @JsonCreator
     @JsonIgnoreProperties(ignoreUnknown = true)
     public JobDefinition(@JsonProperty("name") String name,
                          @JsonProperty("user") String user,
+                         @JsonProperty("jobJarUrl") String jobJarUrl,
                          @JsonProperty("artifactName") String artifactName,
                          @JsonProperty("version") String version,
                          @JsonProperty("parameters") List<Parameter> parameters,
@@ -100,6 +116,17 @@ public class JobDefinition {
         this.schedulingInfo = schedulingInfo;
         this.deploymentStrategy = deploymentStrategy;
         this.withNumberOfStages = withNumberOfStages;
+        this.schedulingConstraints = this.labels.entrySet().stream()
+            .map(label -> {
+                Matcher matcher = MANTIS_SCHEDULING_ATTRIBUTE_LABEL_REGEX.matcher(label.getKey());
+                return matcher.find() ? Pair.of(matcher.group(1), label.getValue().getValue()) : null;
+            })
+            .filter(Objects::nonNull)
+            .collect(Collectors.toMap(
+                Pair::getLeft,
+                Pair::getRight
+            ));
+        this.jobJarUrl = jobJarUrl;
         postProcess();
         validate(true);
     }
@@ -201,6 +228,10 @@ public class JobDefinition {
         return user;
     }
 
+    public String getJobJarUrl() {
+        return jobJarUrl;
+    }
+
     public String getArtifactName() {
         return artifactName;
     }
@@ -221,6 +252,10 @@ public class JobDefinition {
 
     public SchedulingInfo getSchedulingInfo() {
         return schedulingInfo;
+    }
+
+    public Map<String, String> getSchedulingConstraints() {
+        return this.schedulingConstraints;
     }
 
     public DeploymentStrategy getDeploymentStrategy() { return deploymentStrategy; }
@@ -245,6 +280,22 @@ public class JobDefinition {
             .map(l -> ClusterID.of(l.getValue()));
     }
 
+    @JsonIgnore
+    public int getIntSystemParameter(String paramName, int defaultValue) {
+        return getParameters().stream()
+            .filter(p -> paramName.equals(p.getName()))
+            .map(Parameter::getValue)
+            .filter(Objects::nonNull)
+            .map(v -> {
+                try {
+                    return Integer.parseInt(v);
+                } catch (Exception e) {
+                    return defaultValue;
+                }})
+            .findFirst()
+            .orElse(defaultValue);
+    }
+
 
     public static class Builder {
 
@@ -257,6 +308,7 @@ public class JobDefinition {
 
         private List<Label> labels;
 
+        private String jobJarUrl = null;
         private String artifactName = null;
         private String version = null;
 
@@ -272,6 +324,11 @@ public class JobDefinition {
 
         public Builder withName(String name) {
             this.name = name;
+            return this;
+        }
+
+        public Builder withJobJarUrl(String jobJarUrl) {
+            this.jobJarUrl = jobJarUrl;
             return this;
         }
 
@@ -338,6 +395,7 @@ public class JobDefinition {
             this.withLabels(jobDefinition.getLabels());
             this.withName(jobDefinition.name);
             this.withArtifactName(jobDefinition.artifactName);
+            this.withJobJarUrl(jobDefinition.jobJarUrl);
             this.withVersion(jobDefinition.getVersion());
             return this;
         }
@@ -366,7 +424,7 @@ public class JobDefinition {
             }
             Preconditions.checkArgument(withNumberOfStages > 0, "Number of stages cannot be less than 0");
             return new JobDefinition(
-                    name, user, artifactName, version, parameters, jobSla,
+                    name, user, jobJarUrl, artifactName, version, parameters, jobSla,
                     subscriptionTimeoutSecs, schedulingInfo, withNumberOfStages, labels, deploymentStrategy);
         }
     }

@@ -40,6 +40,7 @@ import java.io.IOException;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 import rx.Observable;
+import rx.Subscription;
 import rx.functions.Func1;
 import rx.schedulers.Schedulers;
 
@@ -59,7 +60,7 @@ public class SineFunctionJob extends MantisJobProvider<Point> {
      * The SSE sink sets up an SSE server that can be connected to using SSE clients(curl etc.) to see
      * a real-time stream of (x, y) tuples on a sine curve.
      */
-    private final SelfDocumentingSink<Point> sseSink = new ServerSentEventsSink.Builder<Point>()
+    public static final SelfDocumentingSink<Point> sseSink = new ServerSentEventsSink.Builder<Point>()
             .withEncoder(point -> String.format("{\"x\": %f, \"y\": %f}", point.getX(), point.getY()))
             .withPredicate(new Predicate<>(
                     "filter=even, returns even x parameters; filter=odd, returns odd x parameters.",
@@ -176,15 +177,16 @@ public class SineFunctionJob extends MantisJobProvider<Point> {
      * This source generates a monotonically increasingly value per tick as per INTERVAL_SEC Job parameter.
      * If USE_RANDOM_FLAG is set, the source generates a random value per tick.
      */
-    class TimerSource implements Source<Integer> {
+    static class TimerSource implements Source<Integer> {
 
         @Override
         public Observable<Observable<Integer>> call(Context context, Index index) {
             // If you want to be informed of scaleup/scale down of the source stage of this job you can subscribe
             // to getTotalNumWorkersObservable like the following.
-            index.getTotalNumWorkersObservable().subscribeOn(Schedulers.io()).subscribe((workerCount) -> {
-                System.out.println("Total worker count changed to -> " + workerCount);
-            });
+            Subscription subscription =
+                index.getTotalNumWorkersObservable().subscribeOn(Schedulers.io()).subscribe((workerCount) -> {
+                    System.out.println("Total worker count changed to -> " + workerCount);
+                });
             final int period = (int)
                     context.getParameters().get(INTERVAL_SEC);
             final int max = (int)
@@ -202,6 +204,7 @@ public class SineFunctionJob extends MantisJobProvider<Point> {
             return Observable.just(
                     Observable.interval(0, period, TimeUnit.SECONDS)
                             .map(time -> {
+                                System.out.println("total worker num: " + index.getTotalNumWorkers());
                                 if (useRandom) {
                                     return randomNumGenerator.nextInt((max - min) + 1) + min;
                                 } else {
@@ -212,6 +215,7 @@ public class SineFunctionJob extends MantisJobProvider<Point> {
                                 double value = randomRateVariable.nextDouble();
                                 return (value <= randomRate);
                             })
+                        .doOnUnsubscribe(subscription::unsubscribe)
             );
         }
 

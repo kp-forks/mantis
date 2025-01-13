@@ -61,4 +61,28 @@ public interface CoreConfiguration {
     @Config("mantis.metricsPublisher.publishFrequencyInSeconds")
     @Default("15")
     int getMetricsPublisherFrequencyInSeconds();
+
+    @Config("mantis.asyncHttpClient.maxConnectionsPerHost")
+    @Default("2")
+    int getAsyncHttpClientMaxConnectionsPerHost();
+
+    @Config("mantis.asyncHttpClient.connectionTimeoutMs")
+    @Default("90000")
+    int getAsyncHttpClientConnectionTimeoutMs();
+
+    @Config("mantis.asyncHttpClient.requestTimeoutMs")
+    @Default("90000")
+    int getAsyncHttpClientRequestTimeoutMs();
+
+    @Config("mantis.asyncHttpClient.readTimeoutMs")
+    @Default("90000")
+    int getAsyncHttpClientReadTimeoutMs();
+
+    @Config("mantis.asyncHttpClient.followRedirect")
+    @Default("true")
+    boolean getAsyncHttpClientFollowRedirect();
+
+    @Config("mantis.leader.monitor.factory")
+    @Default("io.mantisrx.server.core.master.LocalLeaderFactory")
+    String getLeaderMonitorFactoryName();
 }

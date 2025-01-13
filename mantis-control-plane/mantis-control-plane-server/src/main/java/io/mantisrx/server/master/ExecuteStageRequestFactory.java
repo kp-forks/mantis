@@ -44,10 +44,12 @@ public class ExecuteStageRequestFactory {
         scheduleRequest.getJobMetadata().getParameters(),
         scheduleRequest.getJobMetadata().getSchedulingInfo(),
         scheduleRequest.getDurationType(),
+        scheduleRequest.getJobMetadata().getHeartbeatIntervalSecs(),
         scheduleRequest.getJobMetadata().getSubscriptionTimeoutSecs(),
         scheduleRequest.getJobMetadata().getMinRuntimeSecs() - (System.currentTimeMillis() - scheduleRequest.getJobMetadata().getMinRuntimeSecs()),
         matchedTaskExecutorInfo.getWorkerPorts(),
-        Optional.empty()
-    );
+        Optional.empty(),
+        scheduleRequest.getJobMetadata().getUser(),
+        scheduleRequest.getJobMetadata().getJobVersion());
   }
 }

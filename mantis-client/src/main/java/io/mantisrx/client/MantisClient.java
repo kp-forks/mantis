@@ -16,6 +16,7 @@
 
 package io.mantisrx.client;
 
+import com.mantisrx.common.utils.Services;
 import io.mantisrx.runtime.JobSla;
 import io.mantisrx.runtime.MantisJobState;
 import io.mantisrx.runtime.descriptor.SchedulingInfo;
@@ -101,6 +102,8 @@ public class MantisClient {
         HighAvailabilityServices haServices =
             HighAvailabilityServicesUtil.createHAServices(
                 Configurations.frmProperties(properties, CoreConfiguration.class));
+
+        Services.startAndWait(haServices);
         clientWrapper = new MasterClientWrapper(haServices.getMasterClientApi());
         this.disablePingFiltering = Boolean.parseBoolean(properties.getProperty(ENABLE_PINGS_KEY));
     }
@@ -108,6 +111,12 @@ public class MantisClient {
     public MantisClient(MasterClientWrapper clientWrapper, boolean disablePingFiltering) {
         this.disablePingFiltering = disablePingFiltering;
         this.clientWrapper = clientWrapper;
+    }
+
+    public MantisClient(HighAvailabilityServices haServices) {
+        haServices.awaitRunning();
+        clientWrapper = new MasterClientWrapper(haServices.getMasterClientApi());
+        this.disablePingFiltering = false;
     }
 
     public MantisClient(MasterClientWrapper clientWrapper) {
@@ -221,8 +230,7 @@ public class MantisClient {
         clientWrapper.addNumSinkWorkersObserver(numSinkWrkrsSubject);
         return new SinkClientImpl<T>(jobId, sinkConnectionFunc, getSinkLocator(),
                 numSinkWrkrsSubject
-                        .filter((jobSinkNumWorkers) -> jobId.equals(jobSinkNumWorkers.getJobId()))
-                        .map((jobSinkNumWorkers) -> jobSinkNumWorkers.getNumSinkWorkers()),
+                        .filter((jobSinkNumWorkers) -> jobId.equals(jobSinkNumWorkers.getJobId())),
                 sinkConnectionsStatusObserver, dataRecvTimeoutSecs, this.disablePingFiltering);
     }
 

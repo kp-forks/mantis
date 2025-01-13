@@ -24,8 +24,10 @@ import static org.junit.Assert.assertTrue;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.testkit.javadsl.TestKit;
+import io.mantisrx.common.Label;
 import io.mantisrx.common.WorkerPorts;
 import io.mantisrx.master.events.LifecycleEventPublisher;
+import io.mantisrx.master.jobcluster.LabelManager.SystemLabels;
 import io.mantisrx.master.jobcluster.job.worker.WorkerHeartbeat;
 import io.mantisrx.master.jobcluster.job.worker.WorkerState;
 import io.mantisrx.master.jobcluster.job.worker.WorkerStatus;
@@ -33,6 +35,7 @@ import io.mantisrx.master.jobcluster.job.worker.WorkerTerminate;
 import io.mantisrx.master.jobcluster.proto.BaseResponse;
 import io.mantisrx.master.jobcluster.proto.BaseResponse.ResponseCode;
 import io.mantisrx.master.jobcluster.proto.JobClusterManagerProto;
+import io.mantisrx.master.jobcluster.proto.JobClusterManagerProto.SubmitJobRequest;
 import io.mantisrx.master.jobcluster.proto.JobClusterProto;
 import io.mantisrx.master.jobcluster.proto.JobProto;
 import io.mantisrx.runtime.JobOwner;
@@ -61,6 +64,7 @@ import java.io.File;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import javax.annotation.Nullable;
 import org.junit.Test;
 
 
@@ -116,9 +120,10 @@ public class JobTestHelper {
     }
 
     public static IJobClusterDefinition generateJobClusterDefinition(String name, SchedulingInfo schedInfo, WorkerMigrationConfig migrationConfig) {
+        String artifactName = "myart";
         JobClusterConfig clusterConfig = new JobClusterConfig.Builder()
-            .withArtifactName("myart")
-
+            .withJobJarUrl("http://" + artifactName)
+            .withArtifactName(artifactName)
             .withSchedulingInfo(schedInfo)
             .withVersion("0.0.1")
             .build();
@@ -130,6 +135,7 @@ public class JobTestHelper {
             .withIsReadyForJobMaster(true)
             .withOwner(new JobOwner("Nick", "Mantis", "desc", "nma@netflix.com", "repo"))
             .withMigrationConfig(migrationConfig)
+            .withLabel(new Label(SystemLabels.MANTIS_RESOURCE_CLUSTER_NAME_LABEL.label, "testcluster"))
             .build();
     }
 
@@ -143,6 +149,7 @@ public class JobTestHelper {
             .withParameters(Lists.newArrayList())
             .withLabels(Lists.newArrayList())
             .withSchedulingInfo(schedInfo)
+            .withJobJarUrl("http://myart")
             .withArtifactName("myart")
             .withSubscriptionTimeoutSecs(0)
             .withUser("njoshi")
@@ -282,9 +289,15 @@ public class JobTestHelper {
         submitJobAndVerifyStatus(probe, clusterName, jobClusterActor, jobDefn, jobId, SUCCESS);
     }
 
-    public static void submitJobAndVerifyStatus(final TestKit probe, String clusterName, ActorRef jobClusterActor, final JobDefinition jobDefn,
+    public static void submitJobAndVerifyStatus(final TestKit probe, String clusterName, ActorRef jobClusterActor, @Nullable final JobDefinition jobDefn,
                                                 String jobId, ResponseCode code) {
-        jobClusterActor.tell(new JobClusterManagerProto.SubmitJobRequest(clusterName, "user", Optional.ofNullable(jobDefn)), probe.getRef());
+        final SubmitJobRequest request;
+        if (jobDefn == null) {
+            request = new SubmitJobRequest(clusterName, "user");
+        } else {
+            request = new JobClusterManagerProto.SubmitJobRequest(clusterName, "user", jobDefn);
+        }
+        jobClusterActor.tell(request, probe.getRef());
         JobClusterManagerProto.SubmitJobResponse submitResponse = probe.expectMsgClass(JobClusterManagerProto.SubmitJobResponse.class);
         assertEquals(code, submitResponse.responseCode);
         if (jobId == null) {
@@ -317,7 +330,9 @@ public class JobTestHelper {
             .withNextWorkerNumToUse(1)
             .withJobDefinition(jobDefn)
             .build();
-        final ActorRef jobActor = system.actorOf(JobActor.props(jobClusterDefn, mantisJobMetaData, jobStoreMock, schedulerMock, lifecycleEventPublisher));
+        final ActorRef jobActor = system.actorOf(
+            JobActor.props(jobClusterDefn, mantisJobMetaData, jobStoreMock, schedulerMock,
+                lifecycleEventPublisher, CostsCalculator.noop()));
 
 
         jobActor.tell(new JobProto.InitJob(probe.getRef()), probe.getRef());

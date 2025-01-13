@@ -42,6 +42,9 @@ import com.netflix.spectator.api.BasicTag;
 import io.mantisrx.master.api.akka.route.Jackson;
 import io.mantisrx.master.api.akka.route.MasterApiMetrics;
 import io.mantisrx.master.jobcluster.proto.BaseResponse;
+import io.mantisrx.server.master.resourcecluster.RequestThrottledException;
+import io.mantisrx.server.master.resourcecluster.ResourceCluster.TaskExecutorNotFoundException;
+import io.mantisrx.server.master.resourcecluster.TaskExecutorTaskCancelledException;
 import io.mantisrx.shaded.com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import io.mantisrx.shaded.com.fasterxml.jackson.databind.node.ObjectNode;
 import io.mantisrx.shaded.com.fasterxml.jackson.databind.ser.FilterProvider;
@@ -242,6 +245,7 @@ abstract class BaseRoute extends AllDirectives {
                             case SERVER_ERROR:
                             default:
                                 MasterApiMetrics.getInstance().incrementResp5xx();
+                                logger.error("completeAsync default response code error: {}", r.message);
                                 return complete(StatusCodes.INTERNAL_SERVER_ERROR, r.message);
                             }
                         })
@@ -259,6 +263,7 @@ abstract class BaseRoute extends AllDirectives {
                                         })
                                         .matchAny(ex -> {
                                             MasterApiMetrics.getInstance().incrementResp5xx();
+                                            logger.error("completeAsync matchAny ex: ", ex);
                                             return complete(
                                                     StatusCodes.INTERNAL_SERVER_ERROR,
                                                     generateFailureResponsePayload(
@@ -322,7 +327,31 @@ abstract class BaseRoute extends AllDirectives {
     protected  <T> Route withFuture(CompletableFuture<T> tFuture) {
         return onComplete(tFuture,
             t -> t.fold(
-                throwable -> complete(StatusCodes.INTERNAL_SERVER_ERROR, throwable, Jackson.marshaller()),
+                throwable -> {
+                    if (throwable instanceof TaskExecutorNotFoundException) {
+                        MasterApiMetrics.getInstance().incrementResp4xx();
+                        return complete(StatusCodes.NOT_FOUND);
+                    }
+
+                    if (throwable instanceof RequestThrottledException) {
+                        MasterApiMetrics.getInstance().incrementResp4xx();
+                        MasterApiMetrics.getInstance().incrementThrottledRequestCount();
+                        return complete(StatusCodes.TOO_MANY_REQUESTS);
+                    }
+
+                    if (throwable instanceof TaskExecutorTaskCancelledException) {
+                        MasterApiMetrics.getInstance().incrementResp4xx();
+                        return complete(StatusCodes.NOT_ACCEPTABLE, throwable, Jackson.marshaller() );
+                    }
+
+                    if (throwable instanceof AskTimeoutException) {
+                        MasterApiMetrics.getInstance().incrementAskTimeOutCount();
+                    }
+
+                    MasterApiMetrics.getInstance().incrementResp5xx();
+                    logger.error("withFuture error: ", throwable);
+                    return complete(StatusCodes.INTERNAL_SERVER_ERROR, throwable, Jackson.marshaller());
+                },
                 r -> complete(StatusCodes.OK, r, Jackson.marshaller())));
     }
 }

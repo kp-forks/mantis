@@ -53,7 +53,8 @@ class SubscriptionStateHandlerImpl extends AbstractScheduledService implements S
 
     @Override
     public void startUp() {
-        currentState.set(SubscriptionState.of(clock));
+        currentState.compareAndSet(null, SubscriptionState.of(clock));
+        log.info("SubscriptionStateHandlerImpl service started.");
     }
 
     @Override
@@ -65,27 +66,38 @@ class SubscriptionStateHandlerImpl extends AbstractScheduledService implements S
     @Override
     protected void runOneIteration() {
         SubscriptionState state = currentState.get();
-        if (state.isUnsubscribedFor(subscriptionTimeout) && state.hasRunFor(minRuntime)) {
-            try {
-                log.info("Calling master to kill due to subscription timeout");
-                masterClientApi.killJob(jobId, "MantisWorker", "No subscriptions for " +
-                                subscriptionTimeout.getSeconds() + " secs")
+        if (state.isUnsubscribedFor(subscriptionTimeout)) {
+            if (state.hasRunFor(minRuntime)) {
+                try {
+                    log.info("Calling master to kill due to subscription timeout");
+                    masterClientApi.killJob(jobId, "MantisWorker", "No subscriptions for " +
+                            subscriptionTimeout.getSeconds() + " secs")
                         .single()
                         .toBlocking()
                         .first();
-            } catch (Exception e) {
-                log.error("Failed to kill job {} due to no subscribers for {} seconds", jobId, state.getUnsubscribedDuration().getSeconds());
+                } catch (Exception e) {
+                    log.error("Failed to kill job {} due to no subscribers for {} seconds", jobId, state.getUnsubscribedDuration().getSeconds());
+                }
+            } else {
+                log.info("Not killing job {} as it has not run for minRuntimeSecs {}", jobId, minRuntime.getSeconds());
             }
         }
     }
 
     @Override
     public void onSinkUnsubscribed() {
+        if (currentState.get() == null) {
+            log.error("currentState in SubscriptionStateHandlerImpl is not set onSinkUnsubscribed");
+            return;
+        }
+        log.info("Sink unsubscribed");
         currentState.updateAndGet(SubscriptionState::onSinkUnsubscribed);
     }
 
     @Override
     public void onSinkSubscribed() {
+        log.info("Sink subscribed");
+        Preconditions.checkNotNull(currentState.get(), "currentState is not intialized onSinkSubscribed.");
         currentState.updateAndGet(SubscriptionState::onSinkSubscribed);
     }
 

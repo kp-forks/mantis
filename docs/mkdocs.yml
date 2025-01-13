@@ -22,6 +22,7 @@ nav:
       - 'Writing Your First Job': 'develop/writing-jobs/word-count.md'
       - 'Writing Your Second Job': 'develop/writing-jobs/twitter.md'
       - 'Writing Your Third Job': 'develop/writing-jobs/group-by.md'
+
     - 'Connectors':
       - 'Iceberg (Beta)': 'develop/connectors/iceberg.md'
   - 'Deploy':
@@ -31,6 +32,7 @@ nav:
     - 'Autoscaling': 'operate/autoscaling.md'
     - 'Autoscaling Strategies': 'operate/autoscalingstrategies.md'
     - 'Memory and CPU Profiling': 'operate/profiling.md'
+    - 'Worker Heartbeats and Timeouts': 'operate/hearbeat.md'
   - 'Reference':
     - 'MQL': 'reference/mql.md'
     - 'Job DSL': 'reference/dsl.md'
@@ -47,6 +49,14 @@ nav:
       - 'Runtime': 'internals/runtime.md'
       - 'Mantis Publish': 'internals/mantis-publish.md'
   - 'Community': 'community.md'
+  - 'Updates':
+      - 'GSOC 2023 Application Guidelines': 'updates/gsoc2023-application-guidelines.md'
+      - 'GSOC 2023 Ideas': 'updates/gsoc2023-ideas.md'
+  - 'Archives':
+      - 'Legacy Sample Jobs':
+        - 'First Job': 'develop/writing-jobs/legacy/word-count.md'
+        - 'Second Job': 'develop/writing-jobs/legacy/twitter.md'
+        - 'Third Job': 'develop/writing-jobs/legacy/group-by.md'
   - 'FAQ': 'faq.md'
   - 'Glossary': 'glossary.md'
 theme:
@@ -71,6 +81,7 @@ markdown_extensions:
       guess_lang: false
   - toc:
       permalink: true
+      toc_depth: 2
   - pymdownx.arithmatex
   - pymdownx.details
   - pymdownx.keys:

@@ -25,6 +25,8 @@ import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiFunction;
+import javax.annotation.Nullable;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
@@ -34,7 +36,6 @@ import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
-import org.apache.iceberg.hadoop.HadoopOutputFile;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.io.OutputFile;
@@ -72,6 +73,8 @@ public class DefaultIcebergWriter implements IcebergWriter {
     private FileAppender<Record> appender;
     private OutputFile file;
     private StructLike partitionKey;
+    @Nullable
+    private Long lowWatermark;
 
     public DefaultIcebergWriter(
             WriterConfig config,
@@ -121,7 +124,7 @@ public class DefaultIcebergWriter implements IcebergWriter {
         Path path = new Path(table.location(), generateFilename());
         String location = locationProvider.newDataLocation(path.toString());
         logger.info("opening new {} file appender {}", format, location);
-        file = HadoopOutputFile.fromLocation(location, config.getHadoopConfig());
+        file = table.io().newOutputFile(path.toString());
 
         switch (format) {
             case PARQUET:
@@ -131,6 +134,7 @@ public class DefaultIcebergWriter implements IcebergWriter {
                         .setAll(tableProperties)
                         .overwrite()
                         .build();
+                lowWatermark = null;
                 break;
             case AVRO:
             default:
@@ -139,8 +143,9 @@ public class DefaultIcebergWriter implements IcebergWriter {
     }
 
     @Override
-    public void write(Record record) {
-        appender.add(record);
+    public void write(MantisRecord record) {
+        appender.add(record.getRecord());
+        lowWatermark = minNullSafe(lowWatermark, record.getTimestamp());
     }
 
     /**
@@ -153,7 +158,7 @@ public class DefaultIcebergWriter implements IcebergWriter {
      * @return a DataFile representing metadata about the records written.
      */
     @Override
-    public DataFile close() throws IOException, UncheckedIOException {
+    public MantisDataFile close() throws IOException, UncheckedIOException {
         if (isClosed()) {
             return null;
         }
@@ -165,7 +170,7 @@ public class DefaultIcebergWriter implements IcebergWriter {
         try {
             appender.close();
 
-            return DataFiles.builder(spec)
+            final DataFile dataFile = DataFiles.builder(spec)
                     .withPath(file.location())
                     .withInputFile(file.toInputFile())
                     .withFileSizeInBytes(appender.length())
@@ -173,6 +178,8 @@ public class DefaultIcebergWriter implements IcebergWriter {
                     .withMetrics(appender.metrics())
                     .withSplitOffsets(appender.splitOffsets())
                     .build();
+
+            return new MantisDataFile(dataFile, lowWatermark);
         } finally {
             appender = null;
             file = null;
@@ -230,5 +237,24 @@ public class DefaultIcebergWriter implements IcebergWriter {
         }
 
         return String.format("/%s/%s", spec.partitionToPath(partitionKey), filename);
+    }
+
+    public static Long minNullSafe(@Nullable Long v1, @Nullable Long v2) {
+        return compareNullSafe(v1, v2, Math::min);
+    }
+
+    public static Long maxNullSafe(@Nullable Long v1, @Nullable Long v2) {
+        return compareNullSafe(v1, v2, Math::max);
+    }
+
+    private static Long compareNullSafe(
+        @Nullable Long v1, @Nullable Long v2, BiFunction<Long, Long, Long> comparator) {
+        if (v1 != null && v2 != null) {
+            return comparator.apply(v1, v2);
+        } else if (v1 != null) {
+            return v1;
+        } else {
+            return v2;
+        }
     }
 }

@@ -668,6 +668,7 @@ public class MantisMasterClientApi implements MantisMasterGateway {
 
     private WebSocketClient<TextWebSocketFrame, TextWebSocketFrame> getRxnettyWebSocketClient(String host,
                                                                                               int port, String uri) {
+        logger.debug("Creating websocket client for " + host + ":" + port + " uri " + uri + " ...");
         return
                 RxNetty.<TextWebSocketFrame, TextWebSocketFrame>newWebSocketClientBuilder(host, port)
                         .withWebSocketURI(uri)
@@ -698,16 +699,29 @@ public class MantisMasterClientApi implements MantisMasterGateway {
      * @return
      */
     public Observable<JobSchedulingInfo> schedulingChanges(final String jobId) {
+        final ConditionalRetry retryObject = new ConditionalRetry(null, "assignmentresults_" + jobId);
         return masterMonitor.getMasterObservable()
                 .filter(masterDescription -> masterDescription != null)
                 .retryWhen(retryLogic)
                 .switchMap((Func1<MasterDescription,
                         Observable<JobSchedulingInfo>>) masterDescription -> getRxnettySseClient(
                                 masterDescription.getHostname(), masterDescription.getSchedInfoPort())
-                        .submit(HttpClientRequest.createGet("/assignmentresults/" + jobId + "?sendHB=true"))
+                        .submit(
+                            HttpClientRequest.createGet("/assignmentresults/" + jobId + "?sendHB=true"))
                         .flatMap((Func1<HttpClientResponse<ServerSentEvent>,
                                 Observable<JobSchedulingInfo>>) response -> {
-                            if (!HttpResponseStatus.OK.equals(response.getStatus())) {
+                            if (HttpResponseStatus.NOT_FOUND.equals(response.getStatus())) {
+                                logger.error("GET assignmentresults not found: {}", response.getStatus());
+                                JobIdNotFoundException notFoundException = new JobIdNotFoundException(jobId);
+                                retryObject.setErrorRef(notFoundException);
+                                return Observable.error(notFoundException);
+                            } else if (HttpResponseStatus.BAD_REQUEST.equals(response.getStatus())) {
+                                logger.error("GET assignmentresults bad request: {}", response.getStatus());
+                                Exception ex = new Exception(response.getStatus().reasonPhrase());
+                                retryObject.setErrorRef(ex);
+                                return Observable.error(ex);
+                            } else if (!HttpResponseStatus.OK.equals(response.getStatus())) {
+                                logger.error("GET assignmentresults failed: {}", response.getStatus());
                                 return Observable.error(new Exception(response.getStatus().reasonPhrase()));
                             }
                             return response.getContent()
@@ -716,6 +730,7 @@ public class MantisMasterClientApi implements MantisMasterGateway {
                                             return objectMapper.readValue(event.contentAsString(),
                                                     JobSchedulingInfo.class);
                                         } catch (IOException e) {
+                                            logger.warn("Invalid schedInfo json: {}", e.getMessage());
                                             throw new RuntimeException("Invalid schedInfo json: " + e.getMessage(), e);
                                         }
                                     })
@@ -726,7 +741,7 @@ public class MantisMasterClientApi implements MantisMasterGateway {
                                     ;
                         }))
                 .repeatWhen(repeatLogic)
-                .retryWhen(retryLogic)
+                .retryWhen(retryObject.getRetryLogic())
                 ;
     }
 

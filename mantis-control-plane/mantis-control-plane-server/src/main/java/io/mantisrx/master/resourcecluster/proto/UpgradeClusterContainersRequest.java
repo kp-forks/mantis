@@ -21,7 +21,7 @@ import lombok.Builder;
 import lombok.Value;
 
 @Value
-@Builder
+@Builder(toBuilder = true)
 public class UpgradeClusterContainersRequest {
     ClusterID clusterId;
 
@@ -34,4 +34,8 @@ public class UpgradeClusterContainersRequest {
     MantisResourceClusterEnvType optionalEnvType;
 
     int optionalBatchMaxSize;
+
+    boolean forceUpgradeOnSameImage;
+
+    boolean enableSkuSpecUpgrade;
 }

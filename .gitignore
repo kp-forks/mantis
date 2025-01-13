@@ -12,6 +12,7 @@
 .idea/**/usage.statistics.xml
 .idea/**/dictionaries
 .idea/**/shelf
+.vim
 
 # Generated files
 .idea/**/contentModel.xml
@@ -200,3 +201,10 @@ gradle-app.setting
 .project
 .settings
 bin/
+
+# mkdocs Build files
+build
+site
+
+# ignore asdf files for jdk manager
+.tool-versions

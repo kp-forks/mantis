@@ -15,12 +15,15 @@
  */
 package io.mantisrx.server.agent;
 
+import io.mantisrx.shaded.com.google.common.util.concurrent.Striped;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.util.concurrent.locks.Lock;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import net.lingala.zip4j.ZipFile;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -41,6 +44,10 @@ public interface BlobStore extends Closeable {
         return new PrefixedBlobStore(prefixUri, this);
     }
 
+    default BlobStore withFallbackStore(BlobStore fallbackStore) {
+        return new FallbackEnabledBlobStore(this, fallbackStore);
+    }
+
     /**
      * blob store that when downloading zip files, also unpacks them and returns the unpacked file/directory to the caller.
      *
@@ -50,6 +57,10 @@ public interface BlobStore extends Closeable {
         return new ZipHandlingBlobStore(this);
     }
 
+    default BlobStore withThreadSafeBlobStore() {
+        return new ThreadSafeBlobStore(this);
+    }
+
     static BlobStore forHadoopFileSystem(URI clusterStoragePath, File localStoreDir) throws Exception {
         final org.apache.hadoop.fs.FileSystem fileSystem =
             FileSystemInitializer.create(clusterStoragePath);
@@ -57,7 +68,25 @@ public interface BlobStore extends Closeable {
         return
             new HadoopFileSystemBlobStore(fileSystem, localStoreDir)
                 .withPrefix(clusterStoragePath)
-                .withZipCapabilities();
+                .withZipCapabilities()
+                .withThreadSafeBlobStore();
+    }
+
+    static BlobStore forHadoopFileSystem(URI clusterStoragePath, URI fallbackStoragePath, File localStoreDir)
+        throws Exception {
+        final org.apache.hadoop.fs.FileSystem fileSystem =
+            FileSystemInitializer.create(clusterStoragePath);
+
+        final org.apache.hadoop.fs.FileSystem fallbackFileSystem =
+            FileSystemInitializer.create(fallbackStoragePath);
+
+        return
+            new HadoopFileSystemBlobStore(fileSystem, localStoreDir)
+                .withPrefix(clusterStoragePath)
+                .withFallbackStore(
+                    new HadoopFileSystemBlobStore(fallbackFileSystem, localStoreDir).withPrefix(fallbackStoragePath))
+                .withZipCapabilities()
+                .withThreadSafeBlobStore();
     }
 
     @RequiredArgsConstructor(access = AccessLevel.PACKAGE)
@@ -78,6 +107,32 @@ public interface BlobStore extends Closeable {
     }
 
     @RequiredArgsConstructor(access = AccessLevel.PACKAGE)
+    @Slf4j
+    class FallbackEnabledBlobStore implements BlobStore {
+        private final BlobStore blobStore;
+        private final BlobStore fallbackBlobStore;
+
+        @Override
+        public File get(URI blobUrl) throws IOException {
+            try
+            {
+                return blobStore.get(blobUrl);
+            }
+            catch (Exception e) {
+                log.error("Get blob error, fallback to next blobstore", e);
+            }
+
+            return fallbackBlobStore.get(blobUrl);
+        }
+
+        @Override
+        public void close() throws IOException {
+            blobStore.close();
+            fallbackBlobStore.close();
+        }
+    }
+
+    @RequiredArgsConstructor(access = AccessLevel.PACKAGE)
     class ZipHandlingBlobStore implements BlobStore {
 
         private final BlobStore blobStore;
@@ -89,15 +144,22 @@ public interface BlobStore extends Closeable {
             if (zipFile == null) {
                 return localFile;
             } else {
+                File destDir = null;
                 try (ZipFile z = zipFile) {
                     String destDirStr = getUnzippedDestDir(z);
-                    File destDir = new File(destDirStr);
+                    destDir = new File(destDirStr);
                     if (destDir.exists()) {
-                        FileUtils.deleteDirectory(destDir);
+                        return destDir;
                     }
 
                     z.extractAll(destDirStr);
                     return destDir;
+                } catch(Exception e) {
+                    // delete directory before re-throwing exception to avoid possible data corruptions
+                    if (destDir != null) {
+                        FileUtils.deleteDirectory(destDir);
+                    }
+                    throw e;
                 }
             }
         }
@@ -118,6 +180,31 @@ public interface BlobStore extends Closeable {
             } else {
                 return null;
             }
+        }
+    }
+
+
+    @RequiredArgsConstructor(access = AccessLevel.PACKAGE)
+    class ThreadSafeBlobStore implements BlobStore {
+
+        private final BlobStore blobStore;
+
+        final Striped<Lock> locks = Striped.lock(1024);
+
+        @Override
+        public File get(URI blobUrl) throws IOException {
+            Lock lock = locks.get(blobUrl.getPath());
+            lock.lock();
+            try {
+                return blobStore.get(blobUrl);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            blobStore.close();
         }
     }
 }

@@ -17,15 +17,12 @@
 package io.mantisrx.server.master.scheduler;
 
 import akka.actor.ActorRef;
-import com.netflix.fenzo.VirtualMachineCurrentState;
-import com.netflix.fenzo.VirtualMachineLease;
 import io.mantisrx.server.core.domain.WorkerId;
 import io.mantisrx.server.master.resourcecluster.TaskExecutorID;
+import io.mantisrx.server.master.scheduler.ResourceClusterAwareSchedulerActor.BatchScheduleRequestEvent;
+import io.mantisrx.server.master.scheduler.ResourceClusterAwareSchedulerActor.CancelBatchRequestEvent;
 import io.mantisrx.server.master.scheduler.ResourceClusterAwareSchedulerActor.CancelRequestEvent;
 import io.mantisrx.server.master.scheduler.ResourceClusterAwareSchedulerActor.InitializeRunningWorkerRequestEvent;
-import io.mantisrx.server.master.scheduler.ResourceClusterAwareSchedulerActor.ScheduleRequestEvent;
-import io.mantisrx.shaded.com.google.common.base.Throwables;
-import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,10 +32,16 @@ import lombok.extern.slf4j.Slf4j;
 public class ResourceClusterAwareScheduler implements MantisScheduler {
 
     private final ActorRef schedulerActor;
+    private final boolean handlesAllocationRetries;
 
     @Override
-    public void scheduleWorker(ScheduleRequest scheduleRequest) {
-        schedulerActor.tell(ScheduleRequestEvent.of(scheduleRequest), null);
+    public void scheduleWorkers(BatchScheduleRequest scheduleRequest) {
+        schedulerActor.tell(BatchScheduleRequestEvent.of(scheduleRequest), null);
+    }
+
+    @Override
+    public void unscheduleJob(String jobId) {
+        schedulerActor.tell(CancelBatchRequestEvent.of(jobId),null);
     }
 
     @Override
@@ -67,39 +70,7 @@ public class ResourceClusterAwareScheduler implements MantisScheduler {
     }
 
     @Override
-    public void rescindOffer(String offerId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void rescindOffers(String hostname) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void addOffers(List<VirtualMachineLease> offers) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void disableVM(String hostname, long durationMillis)
-        throws IllegalStateException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void enableVM(String hostname) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public List<VirtualMachineCurrentState> getCurrentVMState() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void setActiveVmGroups(List<String> activeVmGroups) {
-        log.info("Active VM Groups is {} as per this stack-trace {}", activeVmGroups,
-            Throwables.getStackTraceAsString(new Throwable()));
+    public boolean schedulerHandlesAllocationRetries() {
+        return handlesAllocationRetries;
     }
 }

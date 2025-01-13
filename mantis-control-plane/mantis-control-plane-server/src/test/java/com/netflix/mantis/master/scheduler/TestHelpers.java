@@ -16,10 +16,6 @@
 
 package com.netflix.mantis.master.scheduler;
 
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-
-import com.netflix.fenzo.VirtualMachineLease;
 import io.mantisrx.master.jobcluster.job.IMantisJobMetadata;
 import io.mantisrx.master.jobcluster.job.MantisJobMetadataImpl;
 import io.mantisrx.runtime.JobSla;
@@ -29,51 +25,23 @@ import io.mantisrx.runtime.descriptor.SchedulingInfo;
 import io.mantisrx.runtime.descriptor.StageSchedulingInfo;
 import io.mantisrx.server.core.domain.JobMetadata;
 import io.mantisrx.server.core.domain.WorkerId;
+import io.mantisrx.server.core.scheduler.SchedulingConstraints;
 import io.mantisrx.server.master.config.ConfigurationProvider;
 import io.mantisrx.server.master.config.StaticPropertiesConfigurationFactory;
 import io.mantisrx.server.master.domain.JobDefinition;
 import io.mantisrx.server.master.domain.JobId;
-import io.mantisrx.server.master.mesos.VirtualMachineLeaseMesosImpl;
 import io.mantisrx.server.master.scheduler.ScheduleRequest;
 import java.util.Collections;
-import java.util.Optional;
 import java.util.Properties;
-import org.apache.mesos.Protos;
 
 public class TestHelpers {
-    public static VirtualMachineLeaseMesosImpl createMockLease(final String id,
-                                                               final String hostname,
-                                                               final String vmId,
-                                                               final double cpuCores,
-                                                               final double memoryMB,
-                                                               final double networkMbps,
-                                                               final double diskMB,
-                                                               final VirtualMachineLease.Range range) {
-        final VirtualMachineLeaseMesosImpl lease = mock(VirtualMachineLeaseMesosImpl.class);
-        when(lease.hostname()).thenReturn(hostname);
-        when(lease.getId()).thenReturn(id);
-        when(lease.cpuCores()).thenReturn(cpuCores);
-        when(lease.diskMB()).thenReturn(diskMB);
-        when(lease.networkMbps()).thenReturn(networkMbps);
-        when(lease.memoryMB()).thenReturn(memoryMB);
-        when(lease.getAttributeMap()).thenReturn(Collections.emptyMap());
-        when(lease.getVMID()).thenReturn(vmId);
-        when(lease.portRanges()).thenReturn(Collections.singletonList(range));
-        final Protos.Offer offer = Protos.Offer.newBuilder().setId(Protos.OfferID.newBuilder().setValue(id).build())
-                .setFrameworkId(Protos.FrameworkID.newBuilder().setValue("TestFramework").build())
-                .setHostname(hostname)
-                .setSlaveId(Protos.SlaveID.newBuilder().setValue(vmId).build())
-                .build();
-        when(lease.getOffer()).thenReturn(offer);
-        return lease;
-    }
-
     public static ScheduleRequest createFakeScheduleRequest(final WorkerId workerId,
                                                             final int stageNum,
                                                             final int numStages,
                                                             final MachineDefinition machineDefinition) {
         try {
         	JobDefinition jobDefinition = new JobDefinition.Builder()
+                .withJobJarUrl("http://jar")
                 .withArtifactName("jar")
                 .withSchedulingInfo(new SchedulingInfo(Collections.singletonMap(0,
                     StageSchedulingInfo.builder()
@@ -93,21 +61,20 @@ public class TestHelpers {
             return new ScheduleRequest(
                     workerId,
                     stageNum,
-                    numStages,
                     new JobMetadata(mantisJobMetadata.getJobId().getId(),
                             mantisJobMetadata.getJobJarUrl(),
+                            mantisJobMetadata.getJobDefinition().getVersion(),
                             mantisJobMetadata.getTotalStages(),
                             mantisJobMetadata.getUser(),
                             mantisJobMetadata.getSchedulingInfo(),
                             mantisJobMetadata.getParameters(),
                             mantisJobMetadata.getSubscriptionTimeoutSecs(),
+                            0,
                             mantisJobMetadata.getMinRuntimeSecs()
                     ),
                     mantisJobMetadata.getSla().get().getDurationType(),
-                    machineDefinition,
-                    Collections.emptyList(),
-                    Collections.emptyList(),
-                    0,Optional.empty()
+                    SchedulingConstraints.of(machineDefinition),
+                    0
             );
         } catch (Exception e) {
             e.printStackTrace();
@@ -146,6 +113,7 @@ public class TestHelpers {
         props.setProperty("mesos.lease.offer.expiry.secs", "1");
         props.setProperty("mantis.master.stage.assignment.refresh.interval.ms","-1");
         props.setProperty("mantis.master.api.cache.ttl.milliseconds","0");
+        props.setProperty("mantis.scheduler.enable-batch","true");
 
         ConfigurationProvider.initialize(new StaticPropertiesConfigurationFactory(props));
     }

@@ -26,10 +26,12 @@ import io.mantisrx.master.api.akka.route.proto.JobClusterProtoAdapter.JobIdInfo;
 import io.mantisrx.master.jobcluster.MantisJobClusterMetadataView;
 import io.mantisrx.master.jobcluster.job.IMantisJobMetadata;
 import io.mantisrx.master.jobcluster.job.JobState;
+import io.mantisrx.master.jobcluster.job.JobState.MetaState;
 import io.mantisrx.master.jobcluster.job.MantisJobMetadataView;
 import io.mantisrx.master.jobcluster.job.worker.IMantisWorkerMetadata;
 import io.mantisrx.master.jobcluster.job.worker.WorkerState;
 import io.mantisrx.runtime.WorkerMigrationConfig;
+import io.mantisrx.runtime.descriptor.SchedulingInfo;
 import io.mantisrx.server.core.JobSchedulingInfo;
 import io.mantisrx.server.master.domain.IJobClusterDefinition;
 import io.mantisrx.server.master.domain.JobClusterDefinitionImpl;
@@ -50,6 +52,7 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;
 import rx.subjects.BehaviorSubject;
@@ -505,8 +508,24 @@ public class JobClusterManagerProto {
         }
     }
 
+    @ToString
+    @EqualsAndHashCode
+    @Getter
+    public static final class UpdateSchedulingInfoRequest extends BaseRequest {
+        private final SchedulingInfo schedulingInfo;
+        private final String version;
+
+        public UpdateSchedulingInfoRequest(
+            @JsonProperty("schedulingInfo") SchedulingInfo schedulingInfo,
+            @JsonProperty("version") final String version) {
+            this.schedulingInfo = schedulingInfo;
+            this.version = version;
+        }
+    }
+
     public static final class UpdateJobClusterArtifactRequest extends BaseRequest {
         private final String artifactName;
+        private final String jobJarUrl;
         private final String version;
         private final boolean skipSubmit;
         private final String user;
@@ -517,6 +536,7 @@ public class JobClusterManagerProto {
         public UpdateJobClusterArtifactRequest(
                 @JsonProperty("name") final String clusterName,
                 @JsonProperty("url") final String artifact,
+                @JsonProperty("jobJarUrl") final String jobJarUrl,
                 @JsonProperty("version") final String version,
                 @JsonProperty("skipsubmit") final boolean skipSubmit,
                 @JsonProperty("user") final String user) {
@@ -533,6 +553,11 @@ public class JobClusterManagerProto {
 
             this.clusterName = clusterName;
             this.artifactName = artifact;
+            // [Note] in the legacy setup this artifact field is used to host the job jar url field (it maps to the
+            // json property "url".
+            this.jobJarUrl = jobJarUrl != null ?
+                jobJarUrl :
+                (artifact.startsWith("http://") || artifact.startsWith("https://") ? artifact : "http://" + artifact);
             this.version = version;
             this.skipSubmit = skipSubmit;
             this.user = user;
@@ -540,6 +565,10 @@ public class JobClusterManagerProto {
 
         public String getArtifactName() {
             return artifactName;
+        }
+
+        public String getjobJarUrl() {
+            return jobJarUrl;
         }
 
         public String getVersion() {
@@ -562,12 +591,24 @@ public class JobClusterManagerProto {
         public String toString() {
             return "UpdateJobClusterArtifactRequest{" +
                    "artifactName='" + artifactName + '\'' +
+                   "jobJarUrl='" + jobJarUrl + '\'' +
                    ", version='" + version + '\'' +
                    ", skipSubmit=" + skipSubmit +
                    ", user='" + user + '\'' +
                    ", clusterName='" + clusterName + '\'' +
                    ", requestId=" + requestId +
                    '}';
+        }
+    }
+
+    @EqualsAndHashCode
+    @ToString
+    public static final class UpdateSchedulingInfoResponse extends BaseResponse {
+        public UpdateSchedulingInfoResponse(
+            final long requestId,
+            final ResponseCode responseCode,
+            final String message) {
+            super(requestId, responseCode, message);
         }
     }
 
@@ -854,9 +895,11 @@ public class JobClusterManagerProto {
         private final List<Label> matchingLabels;
         private final Optional<String> labelsOperand;
 
+        private final Optional<JobId> startJobIdExclusive;
+
         public ListJobCriteria(
                 final Optional<Integer> limit,
-                final Optional<JobState.MetaState> jobState,
+                final Optional<MetaState> jobState,
                 final List<Integer> stageNumber,
                 final List<Integer> workerIndex,
                 final List<Integer> workerNumber,
@@ -864,7 +907,8 @@ public class JobClusterManagerProto {
                 final Optional<Boolean> activeOnly,
                 final Optional<String> matchingRegex,
                 final Optional<String> matchingLabels,
-                final Optional<String> labelsOperand) {
+                final Optional<String> labelsOperand,
+                final Optional<JobId> startJobIdExclusive) {
             this.limit = limit;
             this.jobState = jobState;
             this.stageNumberList = stageNumber;
@@ -876,6 +920,7 @@ public class JobClusterManagerProto {
             this.matchingLabels = matchingLabels.map(query -> LabelUtils.generatePairs(query))
                                                 .orElse(Collections.emptyList());
             this.labelsOperand = labelsOperand;
+            this.startJobIdExclusive = startJobIdExclusive;
         }
 
         public ListJobCriteria() {
@@ -886,6 +931,7 @@ public class JobClusterManagerProto {
                     Lists.newArrayList(),
                     Lists.newArrayList(),
                     Lists.newArrayList(),
+                    Optional.empty(),
                     Optional.empty(),
                     Optional.empty(),
                     Optional.empty(),
@@ -930,6 +976,10 @@ public class JobClusterManagerProto {
 
         public Optional<String> getLabelsOperand() {
             return labelsOperand;
+        }
+
+        public Optional<JobId> getStartJobIdExclusive() {
+            return startJobIdExclusive;
         }
 
         @Override
@@ -1009,6 +1059,7 @@ public class JobClusterManagerProto {
                     Lists.newArrayList(),
                     Optional.empty(),
                     Optional.ofNullable(clusterName),
+                    Optional.empty(),
                     Optional.empty(),
                     Optional.empty()));
         }
@@ -1148,7 +1199,8 @@ public class JobClusterManagerProto {
                 final Optional<Boolean> activeOnly,
                 final Optional<String> matchingRegex,
                 final Optional<String> matchingLabels,
-                final Optional<String> labelsOperand) {
+                final Optional<String> labelsOperand,
+                final Optional<JobId> startJobIdExclusive) {
             super();
             filters = new ListJobCriteria(
                     limit,
@@ -1160,13 +1212,15 @@ public class JobClusterManagerProto {
                     activeOnly,
                     matchingRegex,
                     matchingLabels,
-                    labelsOperand);
+                    labelsOperand,
+                    startJobIdExclusive);
 
 
         }
 
         public ListJobIdsRequest() {
             this(
+                    Optional.empty(),
                     Optional.empty(),
                     Optional.empty(),
                     Optional.empty(),
@@ -1526,42 +1580,42 @@ public class JobClusterManagerProto {
         }
     }
 
+    @ToString
     public static final class SubmitJobRequest extends BaseRequest {
         private final Optional<JobDefinition> jobDefinition;
         private final String submitter;
         private final String clusterName;
         private final boolean isAutoResubmit;
+        private final boolean submitLatest;
 
         @JsonCreator
         @JsonIgnoreProperties(ignoreUnknown = true)
         public SubmitJobRequest(
                 @JsonProperty("name") final String clusterName,
                 @JsonProperty("user") final String user,
-                @JsonProperty(value = "jobDefinition") final Optional<JobDefinition> jobDefinition) {
+                @JsonProperty(value = "jobDefinition") final Optional<JobDefinition> jobDefinition,
+                @JsonProperty("submitLatestJobCluster") final boolean submitLatest) {
             super();
-            Preconditions.checkArg(user != null & !user.isEmpty(), "Must provide user in request");
+            Preconditions.checkArg(user != null && !user.isEmpty(), "Must provide user in request");
             Preconditions.checkArg(
-                    clusterName != null & !clusterName.isEmpty(),
+                    clusterName != null && !clusterName.isEmpty(),
                     "Must provide job cluster name in request");
             Preconditions.checkNotNull(jobDefinition, "jobDefinition");
 
             this.jobDefinition = jobDefinition;
             this.submitter = user;
             this.clusterName = clusterName;
-            isAutoResubmit = false;
+            this.isAutoResubmit = false;
+            this.submitLatest = submitLatest;
+        }
+
+        public SubmitJobRequest(String clusterName, String submitter, JobDefinition jobDefinition) {
+            this(clusterName, submitter, false, Optional.of(jobDefinition));
         }
 
         //quick submit
         public SubmitJobRequest(final String clusterName, final String user) {
-            super();
-            Preconditions.checkArg(user != null & !user.isEmpty(), "Must provide user in request");
-            Preconditions.checkArg(
-                    clusterName != null & !clusterName.isEmpty(),
-                    "Must provide job cluster name in request");
-            this.jobDefinition = Optional.empty();
-            this.submitter = user;
-            this.clusterName = clusterName;
-            isAutoResubmit = false;
+            this(clusterName, user, false, Optional.empty());
         }
 
         // used to during sla enforcement
@@ -1571,14 +1625,14 @@ public class JobClusterManagerProto {
                 boolean isAutoResubmit,
                 final Optional<JobDefinition> jobDefinition) {
             super();
-            Preconditions.checkArg(user != null & !user.isEmpty(), "Must provide user in request");
-            Preconditions.checkArg(
-                    clusterName != null & !clusterName.isEmpty(),
+            Preconditions.checkArg(user != null && !user.isEmpty(), "Must provide user in request");
+            Preconditions.checkArg(clusterName != null && !clusterName.isEmpty(),
                     "Must provide job cluster name in request");
             this.jobDefinition = jobDefinition;
             this.submitter = user;
             this.clusterName = clusterName;
             this.isAutoResubmit = isAutoResubmit;
+            this.submitLatest = false;
         }
 
         public Optional<JobDefinition> getJobDefinition() {
@@ -1597,14 +1651,8 @@ public class JobClusterManagerProto {
             return isAutoResubmit;
         }
 
-        @Override
-        public String toString() {
-            return "SubmitJobRequest{" +
-                   "jobDefinition=" + jobDefinition +
-                   ", submitter='" + submitter + '\'' +
-                   ", clusterName='" + clusterName + '\'' +
-                   ", isAutoResubmit=" + isAutoResubmit +
-                   '}';
+        public boolean isSubmitLatest() {
+            return submitLatest;
         }
     }
 
@@ -1650,7 +1698,7 @@ public class JobClusterManagerProto {
             super();
             Preconditions.checkNotNull(user, "user");
             Preconditions.checkArg(
-                    jobId != null & !jobId.isEmpty(),
+                    jobId != null && !jobId.isEmpty(),
                     "Must provide job ID in request");
             Optional<JobId> jOp = JobId.fromId(jobId);
             if (jOp.isPresent()) {

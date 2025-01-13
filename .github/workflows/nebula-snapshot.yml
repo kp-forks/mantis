@@ -1,6 +1,7 @@
 name: "Publish snapshot to NetflixOSS and Maven Central"
 
-on: [pull_request_target]
+on:
+  pull_request:
 
 jobs:
   approve: # First step
@@ -14,6 +15,10 @@ jobs:
     environment:
       name: Integrate Pull Request # Our protected environment variable
     steps:
+      - name: Setup Git
+        run: |
+          git config --global user.name "Mantis OSS Maintainers"
+          git config --global user.email "mantis-oss-dev@googlegroups.com"
       - name: Checkout PR
         uses: actions/checkout@v3
         with:

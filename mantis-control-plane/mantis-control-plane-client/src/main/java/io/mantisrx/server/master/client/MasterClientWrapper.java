@@ -16,6 +16,7 @@
 
 package io.mantisrx.server.master.client;
 
+import com.mantisrx.common.utils.Services;
 import io.mantisrx.common.metrics.Counter;
 import io.mantisrx.common.metrics.Metrics;
 import io.mantisrx.common.metrics.MetricsRegistry;
@@ -80,7 +81,10 @@ public class MasterClientWrapper {
         zkProps.put("mantis.zookeeper.leader.announcement.path", "/leader");
         zkProps.put("mantis.zookeeper.root", "/mantis/master");
         String jobId = "GroupByIPNJ-12";
-        MasterClientWrapper clientWrapper = new MasterClientWrapper(HighAvailabilityServicesUtil.createHAServices(Configurations.frmProperties(zkProps, CoreConfiguration.class)).getMasterClientApi());
+        HighAvailabilityServices haServices =
+            HighAvailabilityServicesUtil.createHAServices(Configurations.frmProperties(zkProps, CoreConfiguration.class));
+        Services.startAndWait(haServices);
+        MasterClientWrapper clientWrapper = new MasterClientWrapper(haServices.getMasterClientApi());
         clientWrapper.getMasterClientApi()
                 .flatMap(new Func1<MantisMasterGateway, Observable<EndpointChange>>() {
                     @Override
@@ -234,7 +238,13 @@ public class MasterClientWrapper {
                                             for (WorkerHost host : workerAssignments.getHosts().values()) {
                                                 final int workerIndex = host.getWorkerIndex();
                                                 final int totalFromPartitions = workerAssignments.getNumWorkers();
-                                                numSinkWorkersSubject.onNext(new JobSinkNumWorkers(jobId, totalFromPartitions));
+                                                final int runningWorkers = (int) workerAssignments
+                                                    .getHosts()
+                                                    .values()
+                                                    .stream()
+                                                    .filter(e -> MantisJobState.isOnStartedState(e.getState()))
+                                                    .count();
+                                                numSinkWorkersSubject.onNext(new JobSinkNumWorkers(jobId, totalFromPartitions, runningWorkers));
                                                 if (usePartition(workerIndex, totalFromPartitions, forPartition, totalPartitions)) {
                                                     //logger.info("Using partition " + workerIndex);
                                                     if (host.getState() == MantisJobState.Started) {
@@ -307,11 +317,13 @@ public class MasterClientWrapper {
     public static class JobSinkNumWorkers {
 
         protected final int numSinkWorkers;
+        protected final int numSinkRunningWorkers;
         private final String jobId;
 
-        public JobSinkNumWorkers(String jobId, int numSinkWorkers) {
+        public JobSinkNumWorkers(String jobId, int numSinkWorkers, int numSinkRunningWorkers) {
             this.jobId = jobId;
             this.numSinkWorkers = numSinkWorkers;
+            this.numSinkRunningWorkers = numSinkRunningWorkers;
         }
 
         public String getJobId() {
@@ -320,6 +332,10 @@ public class MasterClientWrapper {
 
         public int getNumSinkWorkers() {
             return numSinkWorkers;
+        }
+
+        public int getNumSinkRunningWorkers() {
+            return numSinkRunningWorkers;
         }
     }
 

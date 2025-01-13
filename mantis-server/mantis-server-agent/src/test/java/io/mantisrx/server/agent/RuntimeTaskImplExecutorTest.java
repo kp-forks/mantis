@@ -27,7 +27,11 @@ import static org.mockito.Mockito.when;
 
 import com.google.common.collect.ImmutableList;
 import com.spotify.futures.CompletableFutures;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import io.mantisrx.common.Ack;
+import io.mantisrx.common.JsonSerializer;
 import io.mantisrx.common.WorkerPorts;
 import io.mantisrx.runtime.MachineDefinition;
 import io.mantisrx.runtime.MantisJobDurationType;
@@ -35,7 +39,6 @@ import io.mantisrx.runtime.MantisJobState;
 import io.mantisrx.runtime.descriptor.SchedulingInfo;
 import io.mantisrx.runtime.loader.ClassLoaderHandle;
 import io.mantisrx.runtime.loader.RuntimeTask;
-import io.mantisrx.runtime.loader.SinkSubscriptionStateHandler;
 import io.mantisrx.runtime.loader.config.WorkerConfiguration;
 import io.mantisrx.runtime.source.http.HttpServerProvider;
 import io.mantisrx.runtime.source.http.HttpSources;
@@ -44,6 +47,7 @@ import io.mantisrx.runtime.source.http.impl.HttpRequestFactories;
 import io.mantisrx.server.agent.TaskExecutor.Listener;
 import io.mantisrx.server.core.ExecuteStageRequest;
 import io.mantisrx.server.core.JobSchedulingInfo;
+import io.mantisrx.server.core.PostJobStatusRequest;
 import io.mantisrx.server.core.Status;
 import io.mantisrx.server.core.TestingRpcService;
 import io.mantisrx.server.core.WorkerAssignments;
@@ -52,6 +56,7 @@ import io.mantisrx.server.core.domain.WorkerId;
 import io.mantisrx.server.master.client.HighAvailabilityServices;
 import io.mantisrx.server.master.client.MantisMasterGateway;
 import io.mantisrx.server.master.client.ResourceLeaderConnection;
+import io.mantisrx.server.master.resourcecluster.RequestThrottledException;
 import io.mantisrx.server.master.resourcecluster.ResourceClusterGateway;
 import io.mantisrx.server.master.resourcecluster.TaskExecutorReport;
 import io.mantisrx.server.master.resourcecluster.TaskExecutorStatusChange;
@@ -61,6 +66,11 @@ import io.mantisrx.shaded.com.google.common.base.Preconditions;
 import io.mantisrx.shaded.com.google.common.collect.ImmutableMap;
 import io.mantisrx.shaded.com.google.common.collect.Lists;
 import io.mantisrx.shaded.com.google.common.util.concurrent.MoreExecutors;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.URL;
 import java.util.List;
 import java.util.Map;
@@ -68,9 +78,10 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 import javax.annotation.Nullable;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -81,7 +92,9 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import rx.Observable;
 import rx.Subscription;
 
@@ -90,8 +103,9 @@ public class RuntimeTaskImplExecutorTest {
 
     private WorkerConfiguration workerConfiguration;
     private RpcService rpcService;
-    private MantisMasterGateway masterMonitor;
+    private MantisMasterGateway masterClientApi;
     private HighAvailabilityServices highAvailabilityServices;
+    private HttpServer localApiServer;
     private ClassLoaderHandle classLoaderHandle;
     private TaskExecutor taskExecutor;
     private CountDownLatch startedSignal;
@@ -103,16 +117,32 @@ public class RuntimeTaskImplExecutorTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private CollectingTaskLifecycleListener listener;
 
+    @Rule
+    public TemporaryFolder tempFolder = new TemporaryFolder();
+
     @Before
-    public void setUp() {
+    public void setUp() throws IOException {
         final Properties props = new Properties();
         props.setProperty("mantis.zookeeper.root", "");
 
         props.setProperty("mantis.taskexecutor.cluster.storage-dir", "");
-        props.setProperty("mantis.taskexecutor.local.storage-dir", "");
+        props.setProperty("mantis.taskexecutor.registration.store", tempFolder.newFolder().getAbsolutePath());
         props.setProperty("mantis.taskexecutor.cluster-id", "default");
         props.setProperty("mantis.taskexecutor.heartbeats.interval", "100");
         props.setProperty("mantis.taskexecutor.metrics.collector", "io.mantisrx.server.agent.DummyMetricsCollector");
+        props.setProperty("mantis.taskexecutor.registration.retry.initial-delay.ms", "10");
+        props.setProperty("mantis.taskexecutor.registration.retry.mutliplier", "1");
+        props.setProperty("mantis.taskexecutor.registration.retry.randomization-factor", "0.5");
+        props.setProperty("mantis.taskexecutor.heartbeats.retry.initial-delay.ms", "100");
+        props.setProperty("mantis.taskexecutor.heartbeats.retry.max-delay.ms", "500");
+
+        props.setProperty("mantis.localmode", "true");
+        props.setProperty("mantis.zookeeper.connectString", "localhost:8100");
+
+        props.setProperty("mantis.taskexecutor.hardware.cpu-cores", "1.0");
+        props.setProperty("mantis.taskexecutor.hardware.memory-in-mb", "4096.0");
+        props.setProperty("mantis.taskexecutor.hardware.disk-in-mb", "10000.0");
+        props.setProperty("mantis.taskexecutor.hardware.network-bandwidth-in-mb", "1000.0");
 
         startedSignal = new CountDownLatch(1);
         doneSignal = new CountDownLatch(1);
@@ -121,27 +151,21 @@ public class RuntimeTaskImplExecutorTest {
         workerConfiguration = new StaticPropertiesConfigurationFactory(props).getConfig();
         rpcService = new TestingRpcService();
 
-        masterMonitor = mock(MantisMasterGateway.class);
+        masterClientApi = mock(MantisMasterGateway.class);
         classLoaderHandle = ClassLoaderHandle.fixed(getClass().getClassLoader());
-        resourceManagerGateway = getHealthyGateway("gateway 1");
+        resourceManagerGateway = getHealthyGateway("gateway1");
         resourceManagerGatewayCxn = new SimpleResourceLeaderConnection<>(resourceManagerGateway);
+
+        // worker and task executor do not share the same HA instance.
         highAvailabilityServices = mock(HighAvailabilityServices.class);
-        when(highAvailabilityServices.getMasterClientApi()).thenReturn(masterMonitor);
+        when(highAvailabilityServices.getMasterClientApi()).thenReturn(masterClientApi);
         when(highAvailabilityServices.connectWithResourceManager(any())).thenReturn(resourceManagerGatewayCxn);
+        when(highAvailabilityServices.startAsync()).thenReturn(highAvailabilityServices);
+
+        setupLocalControl(8100);
     }
 
     private void start() throws Exception {
-        Consumer<Status> updateTaskExecutionStatusFunction = status -> {
-            log.info("Task Status = {}", status.getState());
-            if (status.getState() == MantisJobState.Started) {
-                startedSignal.countDown();
-            }
-
-            if (status.getState().isTerminalState()) {
-                finalStatus = status;
-                terminatedSignal.countDown();
-            }
-        };
 
         listener = new CollectingTaskLifecycleListener();
         taskExecutor =
@@ -149,9 +173,8 @@ public class RuntimeTaskImplExecutorTest {
                 rpcService,
                 workerConfiguration,
                 highAvailabilityServices,
-                classLoaderHandle,
-                executeStageRequest -> SinkSubscriptionStateHandler.noop(),
-                updateTaskExecutionStatusFunction);
+                classLoaderHandle
+            );
         taskExecutor.addListener(listener, MoreExecutors.directExecutor());
         taskExecutor.start();
         taskExecutor.awaitRunning().get(2, TimeUnit.SECONDS);
@@ -160,9 +183,10 @@ public class RuntimeTaskImplExecutorTest {
     @After
     public void tearDown() throws Exception {
         taskExecutor.close();
+        this.localApiServer.stop(0);
     }
 
-    @Ignore
+    @Ignore // todo: this test is failing on CI.
     @Test
     public void testTaskExecutorEndToEndWithASingleStageJobByLoadingFromClassLoader()
         throws Exception {
@@ -176,7 +200,7 @@ public class RuntimeTaskImplExecutorTest {
                 .put(1, new WorkerAssignments(1, 1,
                     ImmutableMap.<Integer, WorkerHost>builder().put(0, host).build()))
                 .build();
-        when(masterMonitor.schedulingChanges("jobId-0")).thenReturn(
+        when(masterClientApi.schedulingChanges("jobId-0")).thenReturn(
             Observable.just(new JobSchedulingInfo("jobId-0", stageAssignmentMap)));
 
         WorkerId workerId = new WorkerId("jobId-0", 0, 1);
@@ -189,10 +213,13 @@ public class RuntimeTaskImplExecutorTest {
                     .singleWorkerStageWithConstraints(new MachineDefinition(1, 10, 10, 10, 2),
                         Lists.newArrayList(), Lists.newArrayList()).build(),
                 MantisJobDurationType.Transient,
+                    0,
                 1000L,
                 1L,
                 new WorkerPorts(2, 3, 4, 5, 6),
-                Optional.of(SineFunctionJobProvider.class.getName()))), Time.seconds(1));
+                Optional.of(SineFunctionJobProvider.class.getName()),
+                "user",
+                "111")), Time.seconds(1));
         wait.get();
         Assert.assertTrue(startedSignal.await(5, TimeUnit.SECONDS));
         Subscription subscription = HttpSources.source(HttpClientFactories.sseClientFactory(),
@@ -242,9 +269,54 @@ public class RuntimeTaskImplExecutorTest {
         assertFalse(listener.isFailedCalled());
     }
 
+    private void setupLocalControl(int port) throws IOException {
+        this.localApiServer = HttpServer.create(new InetSocketAddress("localhost", port), 0);
+        this.localApiServer.createContext(
+            "/",
+            new HttpHandler() {
+                private JsonSerializer jsonSerializer = new JsonSerializer();
+
+                @Override
+                public void handle(HttpExchange exchange) throws IOException {
+                    if ("GET".equals(exchange.getRequestMethod())) {
+                        log.warn("unexpect get request: {}", exchange.getRequestURI());
+                    } else if ("POST".equals(exchange.getRequestMethod())) {
+                        InputStreamReader isr = new InputStreamReader(exchange.getRequestBody());
+                        BufferedReader br = new BufferedReader(isr);
+                        String value = br.readLine();
+                        log.info("post body: {}", value);
+                        PostJobStatusRequest statusReq =
+                            jsonSerializer.fromJSON(value, PostJobStatusRequest.class);
+                        log.info("Job signal: {}", statusReq.getStatus());
+                        if (statusReq.getStatus().getState() == MantisJobState.Started) {
+                            log.info("Job start signal received");
+                            startedSignal.countDown();
+                        }
+
+                        if (statusReq.getStatus().getState().isTerminalState()) {
+                            log.info("Job terminate signal received");
+                            terminatedSignal.countDown();
+                        }
+                    }
+
+                    OutputStream outputStream = exchange.getResponseBody();
+                    String payload = "";
+                    exchange.sendResponseHeaders(200, payload.length());
+                    outputStream.write(payload.getBytes());
+                    outputStream.flush();
+                    outputStream.close();
+                }
+            });
+
+        ThreadPoolExecutor threadPoolExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(3);
+        this.localApiServer.setExecutor(threadPoolExecutor);
+        this.localApiServer.start();
+        log.info("Local API Server started on port: {}", port);
+    }
+
     @Test
     public void testWhenSuccessiveHeartbeatsFail() throws Exception {
-        ResourceClusterGateway resourceManagerGateway = mock(ResourceClusterGateway.class);
+        ResourceClusterGateway resourceManagerGateway = mock(ResourceClusterGateway.class, "gateway2");
         when(resourceManagerGateway.registerTaskExecutor(any())).thenReturn(
             CompletableFuture.completedFuture(null));
         when(resourceManagerGateway.heartBeatFromTaskExecutor(any()))
@@ -259,7 +331,7 @@ public class RuntimeTaskImplExecutorTest {
 
         start();
         Thread.sleep(1000);
-        verify(resourceManagerGateway, times(2)).registerTaskExecutor(any());
+        verify(resourceManagerGateway, times(1)).registerTaskExecutor(any());
         Assert.assertTrue(taskExecutor.isRegistered(Time.seconds(1)).get());
     }
 
@@ -279,10 +351,8 @@ public class RuntimeTaskImplExecutorTest {
 
         // check if the switch has been made
         verify(resourceManagerGateway, times(1)).registerTaskExecutor(any());
-        verify(resourceManagerGateway, times(1)).disconnectTaskExecutor(any());
         verify(resourceManagerGateway, atLeastOnce()).heartBeatFromTaskExecutor(any());
 
-        verify(newResourceClusterGateway, times(1)).registerTaskExecutor(any());
         verify(newResourceClusterGateway, atLeastOnce()).heartBeatFromTaskExecutor(any());
 
         // check if the task executor is registered
@@ -305,18 +375,13 @@ public class RuntimeTaskImplExecutorTest {
 
         // check if the switch has been made
         verify(resourceManagerGateway, times(1)).registerTaskExecutor(any());
-        verify(resourceManagerGateway, times(1)).disconnectTaskExecutor(any());
         verify(resourceManagerGateway, atLeastOnce()).heartBeatFromTaskExecutor(any());
-
-        verify(newResourceManagerGateway1, atLeastOnce()).registerTaskExecutor(any());
-        verify(newResourceManagerGateway1, atLeastOnce()).disconnectTaskExecutor(any());
-        verify(newResourceManagerGateway1, never()).heartBeatFromTaskExecutor(any());
+        verify(newResourceManagerGateway1, atLeastOnce()).heartBeatFromTaskExecutor(any());
 
         ResourceClusterGateway newResourceManagerGateway2 = getHealthyGateway("gateway 3");
         resourceManagerGatewayCxn.newLeaderIs(newResourceManagerGateway2);
         Thread.sleep(1000);
 
-        verify(newResourceManagerGateway2, times(1)).registerTaskExecutor(any());
         verify(newResourceManagerGateway2, never()).disconnectTaskExecutor(any());
         verify(newResourceManagerGateway2, atLeastOnce()).heartBeatFromTaskExecutor(any());
 
@@ -325,7 +390,7 @@ public class RuntimeTaskImplExecutorTest {
     }
 
     private static ResourceClusterGateway getHealthyGateway(String name) {
-        ResourceClusterGateway gateway = mock(ResourceClusterGateway.class);
+        ResourceClusterGateway gateway = mock(ResourceClusterGateway.class, name);
         when(gateway.registerTaskExecutor(any())).thenReturn(CompletableFuture.completedFuture(Ack.getInstance()));
         when(gateway.heartBeatFromTaskExecutor(any())).thenReturn(
             CompletableFuture.completedFuture(Ack.getInstance()));
@@ -333,11 +398,10 @@ public class RuntimeTaskImplExecutorTest {
             .thenReturn(CompletableFuture.completedFuture(Ack.getInstance()));
         when(gateway.disconnectTaskExecutor(any()))
             .thenReturn(CompletableFuture.completedFuture(Ack.getInstance()));
-        when(gateway.toString()).thenReturn(name);
         return gateway;
     }
 
-    private static ResourceClusterGateway getUnhealthyGateway(String name) {
+    private static ResourceClusterGateway getUnhealthyGateway(String name) throws RequestThrottledException {
         ResourceClusterGateway gateway = mock(ResourceClusterGateway.class);
         when(gateway.registerTaskExecutor(any())).thenReturn(
             CompletableFutures.exceptionallyCompletedFuture(new UnknownError("error")));
@@ -378,23 +442,14 @@ public class RuntimeTaskImplExecutorTest {
 
     private static class TestingTaskExecutor extends TaskExecutor {
 
-        private final Consumer<Status> consumer;
 
         public TestingTaskExecutor(RpcService rpcService,
                                    WorkerConfiguration workerConfiguration,
                                    HighAvailabilityServices highAvailabilityServices,
-                                   ClassLoaderHandle classLoaderHandle,
-                                   SinkSubscriptionStateHandler.Factory subscriptionStateHandlerFactory,
-                                   Consumer<Status> consumer) {
-            super(rpcService, workerConfiguration, highAvailabilityServices, classLoaderHandle,
-                subscriptionStateHandlerFactory);
-            this.consumer = consumer;
+                                   ClassLoaderHandle classLoaderHandle) {
+            super(rpcService, workerConfiguration, highAvailabilityServices, classLoaderHandle);
         }
 
-        @Override
-        protected void updateExecutionStatus(Status status) {
-            consumer.accept(status);
-        }
     }
 
     @Getter

@@ -60,7 +60,6 @@ import io.mantisrx.master.api.akka.route.handlers.JobStatusRouteHandler;
 import io.mantisrx.master.api.akka.route.handlers.ResourceClusterRouteHandler;
 import io.mantisrx.master.api.akka.route.proto.JobClusterProtoAdapter;
 import io.mantisrx.master.api.akka.route.v1.AdminMasterRoute;
-import io.mantisrx.master.api.akka.route.v1.AgentClustersRoute;
 import io.mantisrx.master.api.akka.route.v1.JobArtifactsRoute;
 import io.mantisrx.master.api.akka.route.v1.JobClustersRoute;
 import io.mantisrx.master.api.akka.route.v1.JobDiscoveryStreamRoute;
@@ -72,11 +71,11 @@ import io.mantisrx.master.events.LifecycleEventPublisher;
 import io.mantisrx.master.events.LifecycleEventPublisherImpl;
 import io.mantisrx.master.events.StatusEventSubscriberLoggingImpl;
 import io.mantisrx.master.events.WorkerEventSubscriberLoggingImpl;
+import io.mantisrx.master.jobcluster.job.CostsCalculator;
 import io.mantisrx.master.jobcluster.job.JobTestHelper;
 import io.mantisrx.master.jobcluster.job.MantisJobMetadataView;
 import io.mantisrx.master.jobcluster.proto.JobClusterManagerProto;
 import io.mantisrx.master.scheduler.FakeMantisScheduler;
-import io.mantisrx.master.vm.AgentClusterOperations;
 import io.mantisrx.runtime.MantisJobDurationType;
 import io.mantisrx.runtime.MantisJobState;
 import io.mantisrx.server.core.JobSchedulingInfo;
@@ -197,9 +196,13 @@ public class JobRouteTest {
                         new WorkerEventSubscriberLoggingImpl());
 
                 IMantisPersistenceProvider mantisStorageProvider = new KeyValueBasedPersistenceProvider(new FileBasedStore(), lifecycleEventPublisher);
-                ActorRef jobClustersManagerActor = system.actorOf(JobClustersManagerActor.props(
-                        new MantisJobStore(new FileBasedPersistenceProvider(
-                                true)), lifecycleEventPublisher), "jobClustersManager");
+                ActorRef jobClustersManagerActor = system.actorOf(
+                    JobClustersManagerActor.props(
+                        new MantisJobStore(new FileBasedPersistenceProvider(true)),
+                        lifecycleEventPublisher,
+                        CostsCalculator.noop(),
+                        0),
+                    "jobClustersManager");
 
                 MantisSchedulerFactory fakeSchedulerFactory = mock(MantisSchedulerFactory.class);
                 MantisScheduler fakeScheduler = new FakeMantisScheduler(jobClustersManagerActor);
@@ -253,12 +256,7 @@ public class JobRouteTest {
                 final JobStatusRouteHandler jobStatusRouteHandler = mock(JobStatusRouteHandler.class);
                 when(jobStatusRouteHandler.jobStatus(anyString())).thenReturn(Flow.create());
                 final JobStatusRoute v0JobStatusRoute = new JobStatusRoute(jobStatusRouteHandler);
-                final AgentClusterOperations mockAgentClusterOps = mock(AgentClusterOperations.class);
-                final AgentClusterRoute v0AgentClusterRoute = new AgentClusterRoute(
-                        mockAgentClusterOps,
-                        system);
-                final AgentClustersRoute v1AgentClusterRoute = new AgentClustersRoute(
-                        mockAgentClusterOps);
+
                 final JobDiscoveryStreamRoute v1JobDiscoveryStreamRoute = new JobDiscoveryStreamRoute(jobDiscoveryRouteHandler);
                 final LastSubmittedJobIdStreamRoute v1LastSubmittedJobIdStreamRoute = new LastSubmittedJobIdStreamRoute(jobDiscoveryRouteHandler);
                 final JobStatusStreamRoute v1JobStatusStreamRoute = new JobStatusStreamRoute(jobStatusRouteHandler);
@@ -279,12 +277,10 @@ public class JobRouteTest {
                         v0JobRoute,
                         v0JobDiscoveryRoute,
                         v0JobStatusRoute,
-                        v0AgentClusterRoute,
                         v1JobClusterRoute,
                         v1JobsRoute,
                         v1JobArtifactsRoute,
                         v1AdminMasterRoute,
-                        v1AgentClusterRoute,
                         v1JobDiscoveryStreamRoute,
                         v1LastSubmittedJobIdStreamRoute,
                         v1JobStatusStreamRoute,

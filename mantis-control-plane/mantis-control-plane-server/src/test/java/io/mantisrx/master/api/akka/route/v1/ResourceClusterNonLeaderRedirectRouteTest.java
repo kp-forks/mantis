@@ -53,13 +53,15 @@ import io.mantisrx.master.resourcecluster.proto.ScaleResourceRequest;
 import io.mantisrx.master.resourcecluster.proto.ScaleResourceResponse;
 import io.mantisrx.master.resourcecluster.proto.UpgradeClusterContainersRequest;
 import io.mantisrx.master.resourcecluster.proto.UpgradeClusterContainersResponse;
-import io.mantisrx.master.resourcecluster.resourceprovider.InMemoryOnlyResourceClusterStorageProvider;
 import io.mantisrx.master.resourcecluster.resourceprovider.NoopResourceClusterResponseHandler;
 import io.mantisrx.master.resourcecluster.resourceprovider.ResourceClusterProvider;
 import io.mantisrx.master.resourcecluster.resourceprovider.ResourceClusterProviderAdapter;
+import io.mantisrx.master.resourcecluster.resourceprovider.ResourceClusterProviderUpgradeRequest;
 import io.mantisrx.master.resourcecluster.resourceprovider.ResourceClusterResponseHandler;
 import io.mantisrx.runtime.MachineDefinition;
 import io.mantisrx.server.master.config.ConfigurationProvider;
+import io.mantisrx.server.master.persistence.IMantisPersistenceProvider;
+import io.mantisrx.server.master.persistence.InMemoryPersistenceProvider;
 import io.mantisrx.server.master.resourcecluster.ClusterID;
 import io.mantisrx.server.master.resourcecluster.PagedActiveJobOverview;
 import io.mantisrx.server.master.resourcecluster.ResourceCluster;
@@ -70,6 +72,7 @@ import io.mantisrx.server.master.resourcecluster.TaskExecutorRegistration;
 import io.mantisrx.shaded.com.google.common.collect.ImmutableList;
 import io.mantisrx.shaded.com.google.common.collect.ImmutableMap;
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
@@ -88,15 +91,16 @@ public class ResourceClusterNonLeaderRedirectRouteTest extends JUnitRouteTest {
     private final ActorSystem system =
         ActorSystem.create(ResourceClusterNonLeaderRedirectRouteTest.class.getSimpleName());
 
+    private final IMantisPersistenceProvider storageProvider = new InMemoryPersistenceProvider();
+
     private final ActorRef resourceClustersHostManagerActorWithNoopAdapter = system.actorOf(
         ResourceClustersHostManagerActor.props(
             new ResourceClusterProviderAdapter(ConfigurationProvider.getConfig().getResourceClusterProvider(), system),
-            ConfigurationProvider.getConfig().getResourceClusterStorageProvider()),
+            storageProvider),
         "jobClustersManagerNoop");
 
     private final ActorRef resourceClustersHostManagerActorWithTestAdapter = system.actorOf(
-        ResourceClustersHostManagerActor.props(
-            resourceProviderAdapter, new InMemoryOnlyResourceClusterStorageProvider()),
+        ResourceClustersHostManagerActor.props(resourceProviderAdapter, storageProvider),
         "jobClustersManagerTest");
 
     private final ResourceClusterRouteHandler resourceClusterRouteHandlerWithNoopAdapter =
@@ -132,7 +136,7 @@ public class ResourceClusterNonLeaderRedirectRouteTest extends JUnitRouteTest {
                 .build();
 
         TaskExecutorStatus status =
-            new TaskExecutorStatus(registration, true, true, true, false, null, Instant.now().toEpochMilli());
+            new TaskExecutorStatus(registration, true, true, true, false, null, Instant.now().toEpochMilli(), null);
         ResourceCluster resourceCluster = mock(ResourceCluster.class);
         when(resourceCluster.getTaskExecutorState(TaskExecutorID.of("myExecutor")))
             .thenReturn(CompletableFuture.completedFuture(status));
@@ -178,7 +182,12 @@ public class ResourceClusterNonLeaderRedirectRouteTest extends JUnitRouteTest {
     public void testDisableTaskExecutorsRoute() {
         // set up the mocks
         ResourceCluster resourceCluster = mock(ResourceCluster.class);
-        when(resourceCluster.disableTaskExecutorsFor(ArgumentMatchers.eq(RESOURCE_CLUSTER_DISABLE_TASK_EXECUTORS_ATTRS), ArgumentMatchers.any()))
+        when(resourceCluster.disableTaskExecutorsFor(
+            ArgumentMatchers.eq(RESOURCE_CLUSTER_DISABLE_TASK_EXECUTORS_ATTRS),
+            ArgumentMatchers.argThat(expiry ->
+                expiry.isAfter(Instant.now().plus(Duration.ofHours(17))) &&
+                    expiry.isBefore(Instant.now().plus(Duration.ofHours(20)))),
+            ArgumentMatchers.eq(Optional.empty())))
             .thenReturn(CompletableFuture.completedFuture(Ack.getInstance()));
         when(resourceClusters.getClusterFor(ClusterID.of("myCluster"))).thenReturn(resourceCluster);
 
@@ -463,7 +472,7 @@ public class ResourceClusterNonLeaderRedirectRouteTest extends JUnitRouteTest {
 
         @Override
         public CompletionStage<UpgradeClusterContainersResponse> upgradeContainerResource(
-            UpgradeClusterContainersRequest request) {
+            ResourceClusterProviderUpgradeRequest request) {
             return CompletableFuture.completedFuture(
                 UpgradeClusterContainersResponse.builder()
                     .message("test scale resp")

@@ -50,7 +50,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 public class JobClusterProtoAdapter {
     // explicit private constructor to prohibit instantiation
@@ -61,7 +60,9 @@ public class JobClusterProtoAdapter {
 
         final CreateJobClusterRequest request = new CreateJobClusterRequest(new JobClusterDefinitionImpl(
                 jd.getName(),
-                Arrays.asList(new JobClusterConfig(jd.getJobJarFileLocation().toString(),
+                Arrays.asList(new JobClusterConfig(
+                        jd.getJobJarFileLocation().toString(),
+                        jd.getJobJarFileLocation().toString(),
                         System.currentTimeMillis(),
                         jd.getVersion(),
                         jd.getSchedulingInfo()
@@ -181,11 +182,13 @@ public class JobClusterProtoAdapter {
 
         final UpdateJobClusterRequest request = new UpdateJobClusterRequest(new JobClusterDefinitionImpl(
                 jd.getName(),
-                Arrays.asList(new JobClusterConfig(jd.getJobJarFileLocation().toString(),
-                        System.currentTimeMillis(),
-                        jd.getVersion(),
-                        jd.getSchedulingInfo()
-                        )),
+                Arrays.asList(new JobClusterConfig(
+                    jd.getJobJarFileLocation().toString(),
+                    jd.getJobJarFileLocation().toString(),
+                    System.currentTimeMillis(),
+                    jd.getVersion(),
+                    jd.getSchedulingInfo()
+                    )),
                 njd.getOwner(),
                 jd.getUser(),
 
@@ -230,24 +233,22 @@ public class JobClusterProtoAdapter {
 
     public static final JobClusterManagerProto.SubmitJobRequest toSubmitJobClusterRequest(final MantisJobDefinition jd)
         throws InvalidJobException {
-
         final JobClusterManagerProto.SubmitJobRequest request = new JobClusterManagerProto.SubmitJobRequest(
             jd.getName(),
             jd.getUser(),
-            Optional.of(
-                new JobDefinition(
-                    jd.getName(),
-                    jd.getUser(),
-                    (DataFormatAdapter.extractArtifactName(jd.getJobJarFileLocation())).orElse(""),
-                    jd.getVersion(),
-                    jd.getParameters(),
-                    jd.getJobSla(),
-                    jd.getSubscriptionTimeoutSecs(),
-                    jd.getSchedulingInfo(),
-                    jd.getSchedulingInfo() == null ? -1 : jd.getSchedulingInfo().getStages().size(),
-                    processLabels(jd),
-                    jd.getDeploymentStrategy())
-            ));
+            new JobDefinition(
+                jd.getName(),
+                jd.getUser(),
+                (jd.getJobJarFileLocation() == null) ? "" : jd.getJobJarFileLocation().toString(),
+                (DataFormatAdapter.extractArtifactName(jd.getJobJarFileLocation())).orElse(""),
+                jd.getVersion(),
+                jd.getParameters(),
+                jd.getJobSla(),
+                jd.getSubscriptionTimeoutSecs(),
+                jd.getSchedulingInfo(),
+                jd.getSchedulingInfo() == null ? -1 : jd.getSchedulingInfo().getStages().size(),
+                processLabels(jd),
+                jd.getDeploymentStrategy()));
 
         return request;
     }

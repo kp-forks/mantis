@@ -25,8 +25,8 @@ import java.util.List;
 
 public class ScalarToScalar<T, R> extends StageConfig<T, R> {
 
-    private INPUT_STRATEGY inputStrategy;
-    private ScalarComputation<T, R> computation;
+    private final INPUT_STRATEGY inputStrategy;
+    private final ScalarComputation<T, R> computation;
     private List<ParameterDefinition<?>> parameters;
 
     /**
@@ -40,7 +40,7 @@ public class ScalarToScalar<T, R> extends StageConfig<T, R> {
     }
 
 
-    ScalarToScalar(ScalarComputation<T, R> computation,
+    public ScalarToScalar(ScalarComputation<T, R> computation,
                    Config<T, R> config, Codec<T> inputCodec) {
         super(config.description, inputCodec, config.codec, config.inputStrategy, config.parameters, config.concurrency);
         this.computation = computation;
@@ -72,9 +72,9 @@ public class ScalarToScalar<T, R> extends StageConfig<T, R> {
         private List<ParameterDefinition<?>> parameters = Collections.emptyList();
 
         /**
-         * @param codec
+         * @param codec is Codec of netty reactivex
          *
-         * @return
+         * @return Config
          *
          * @deprecated As of release 0.603, use {@link #codec(Codec)} instead
          */
